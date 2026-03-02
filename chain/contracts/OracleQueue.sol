@@ -97,28 +97,3 @@ contract OracleQueue {
     }
     
 }
-/*
-contract OracleQueue {
-
-    // Counter to generate unique Id
-    uint256 public jobCounter;
-
-    // The event contains all the information to be processed by the Oracles
-    event LogNewJob(
-        uint256 indexed jobId, 
-        string ipfsCid, 
-        address requester, 
-        uint256 timestamp
-    );
-
-    function requestComputation(string calldata _ipfsCid) external {
-        // 1. Take the currentiId and increment it for the next one
-        uint256 currentId = jobCounter;
-        jobCounter++;
-
-        // 2. Emit the event
-        // The event is going to be catched by the EventListener in every node
-        emit LogNewJob(currentId, _ipfsCid, msg.sender, block.timestamp);
-    }
-}
-*/

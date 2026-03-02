@@ -7,12 +7,7 @@ services:
     ports:
       - "8545:8545" #Changed for view call problems
     networks:
-      - ocr-net
-    #healthcheck:
-    #  test: ["CMD", "nc", "-z", "localhost", "8545"]
-    #  interval: 5s
-    #  timeout: 5s
-    #  retries: 5
+      - ocr-net  
     env_file:
       - .env
 
