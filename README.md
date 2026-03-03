@@ -148,8 +148,13 @@ To stop execution:
 
 Press `CTRL+C` in the Docker terminal.
 
-To completely reset everything:
+To rebuild the containers:
 
 ```bash
 docker compose down -v
+```
+
+To reset everything (deleting docker's data)
+```bash
+docker system prune -a -f
 ```
