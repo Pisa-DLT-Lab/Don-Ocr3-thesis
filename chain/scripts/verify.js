@@ -1,22 +1,23 @@
 const hre = require("hardhat");
 require("dotenv").config({ path: "../.env" });
 
+// Function to verify the first numbers of the array
 async function main() {
-  const CONTRACT_ADDR = process.env.VERIFIER_ADDRESS; // Assicurati che nel .env ci sia l'indirizzo del Verifier nuovo
+  const CONTRACT_ADDR = process.env.VERIFIER_ADDRESS; 
 
   console.log(`\nVerifying Oracle Data on Chain`);
   console.log(`Target Contract: ${CONTRACT_ADDR}`);
 
-  // Collegamento al contratto
+  // Connection to the contract
   const verifier = await hre.ethers.getContractAt("OracleVerifier", CONTRACT_ADDR);
 
   try {
-    // 1. TROVARE L'ID: Cerchiamo negli eventi passati per trovare l'ultimo salvataggio
+    // 1. Find the ID
     console.log("   -> Searching for 'JobCompleted' events...");
     
-    // Crea il filtro per l'evento
+    // Create filter for the event
     const filter = verifier.filters.JobCompleted();
-    // Ottieni lo storico degli eventi (dal blocco genesi a oggi)
+    // Obtain the history of the events from the generation of block 0
     const events = await verifier.queryFilter(filter);
 
     if (events.length === 0) {
@@ -24,9 +25,9 @@ async function main() {
         return;
     }
 
-    // Prendiamo l'ultimo evento emesso (il più recente)
+    // Take the last event
     const latestEvent = events[events.length - 1];
-    const requestId = latestEvent.args[0]; // Il primo argomento dell'evento è requestId
+    const requestId = latestEvent.args[0]; // First arg of the event is the req ID
     const submitterFromEvent = latestEvent.args[1];
     const lengthFromEvent = latestEvent.args[2];
 
@@ -34,17 +35,17 @@ async function main() {
     console.log(`   Submitter: ${submitterFromEvent}`);
     console.log(`   Declared Length: ${lengthFromEvent}`);
 
-    // 2. LEGGERE I DATI: Chiamiamo la funzione getResult con l'ID trovato
+    // 2. Call the getResult function with the ID found
     console.log(`\nFetching data from Storage (getResult)...`);
     
-    // Restituisce: [flatMatrix, submitter, timestamp]
+    // Returns: [flatMatrix, submitter, timestamp]
     const result = await verifier.getResult(requestId);
     
-    const flatMatrix = result[0]; // Array di BigInt
+    const flatMatrix = result[0]; // BigInt Array
     const submitter = result[1];
     const timestamp = result[2];
 
-    // 3. CONVERSIONE E VISUALIZZAZIONE
+    // 3. Convertion and visualization
     console.log("\nData Analysis:");
     console.log(`   - Timestamp: ${new Date(Number(timestamp) * 1000).toLocaleString()}`);
     console.log(`   - Saved By:  ${submitter}`);
@@ -54,12 +55,12 @@ async function main() {
     console.log("   (Converting fixed-point 1e18 to Float)");
     console.log("   ----------------------------------------");
 
-    // Mostriamo solo i primi 10 per non intasare la console se sono 2500
+    // Show the first 10 int, avoid to dipslay 2500 int
     const limit = Math.min(flatMatrix.length, 10);
     
     for (let i = 0; i < limit; i++) {
-        // I dati arrivano come BigInt (es. 1000000000000000000n)
-        // Usiamo formatUnits per rimettere la virgola (divide per 10^18)
+        // Data arrive as BigInt (es. 1000000000000000000n)
+        // Use formatUnits to divide for 10^18; replaces the .
         const floatValue = hre.ethers.formatUnits(flatMatrix[i], 18);
         console.log(`   [${i}]: ${floatValue}`);
     }
@@ -67,7 +68,7 @@ async function main() {
     if (flatMatrix.length > 10) {
         console.log(`   ... (+ other ${flatMatrix.length - 10} items hidden)`);
         
-        // Stampiamo l'ultimo per conferma
+        // Print the last for confirm
         const lastVal = hre.ethers.formatUnits(flatMatrix[flatMatrix.length - 1], 18);
         console.log(`   [LAST]: ${lastVal}`);
     }
@@ -76,7 +77,7 @@ async function main() {
 
   } catch (error) {
     console.error("\nError:");
-    // Se l'errore è "Result not found", vuol dire che l'ID non esiste o saved=false
+    // If Result not found, means that the ID doesn't exist or saved=false
     if (error.reason) console.error("Reason:", error.reason);
     console.error(error);
   }
