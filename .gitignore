@@ -82,7 +82,8 @@ tmp_jobs/
 # ========================
 /ipfs_data/
 /docker_data/
-/ipfsAgent/
+ipfsAgent/
+IpfsAgent/ipfs_data/*
 
 chain/scripts/ipfsInsertData.js
 chain/scripts/deploy.js
