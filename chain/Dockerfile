@@ -28,19 +28,5 @@ RUN echo '#!/bin/sh' > /start.sh && \
     echo 'echo "--- CHAIN READY ---"' >> /start.sh && \
     echo 'wait' >> /start.sh && \
     chmod +x /start.sh
-
-    # 5. Script for the start of hardhat and the deployment of the two smart contract
-    #RUN echo '#!/bin/sh' > /start.sh && \
-    #echo 'echo "--- STARTING HARDHAT NODE ---"' >> /start.sh && \
-    #echo 'npx hardhat node --hostname 0.0.0.0 &' >> /start.sh && \
-    #echo 'echo "--- WAITING 5s FOR CHAIN TO BOOT ---"' >> /start.sh && \
-    #echo 'sleep 5' >> /start.sh && \
-    #echo 'echo "--- DEPLOYING VERIFIER ---"' >> /start.sh && \
-    #echo 'npx hardhat run scripts/deploy.js --network localhost || echo "VERIFIER DEPLOY FAILED!"' >> /start.sh && \
-    #echo 'echo "--- DEPLOYING ORACLE QUEUE ---"' >> /start.sh && \
-    #echo 'npx hardhat run scripts/deploy_queue.js --network localhost || echo "QUEUE DEPLOY FAILED!"' >> /start.sh && \
-    #echo 'echo "--- CHAIN READY ---"' >> /start.sh && \
-    #echo 'wait' >> /start.sh && \
-    #chmod +x /start.sh
-
+    
 CMD ["/start.sh"]
