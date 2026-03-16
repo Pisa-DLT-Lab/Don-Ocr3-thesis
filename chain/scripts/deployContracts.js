@@ -38,10 +38,10 @@ async function main() {
 
     if (NUM_ORACLES === 7) {
     // The exact configDigest captured for the 7-node network
-        REAL_DIGEST = "0x0001b6fbc2a62505e1794d82dac35c58e873949d2bb7fbceb9b0f2dd6087e453";
+        REAL_DIGEST = "0x0001019032f48532003abae19a45640493e4c80e455c96c1e3144ce7e7d33319";
     } else if (NUM_ORACLES === 4) {
     // Set it for 4 nodes
-        REAL_DIGEST = "0x000158f7f7c4991b5c00a358c5d69d71a22e23d525651732d77c272edba110ed"; 
+        REAL_DIGEST = "0x0001eb5bd089a1e47f2e7bf9d2332c5b1d9717a4268f5441b3a61d2db8c05475"; 
     } else {
     // Safety fallback with zeros for custom configurations
         REAL_DIGEST = "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -63,7 +63,7 @@ async function main() {
     console.log("- ModelCreator (Deployer):", modelCreator.address);
     console.log("- Oracles Array:", oraclesArray);
     console.log("- Calculated 'f' value:", fValue);
-    console.log("- CONFIG DIGEST UTILIZZATO:", REAL_DIGEST);
+    //console.log("- CONFIG DIGEST UTILIZZATO:", REAL_DIGEST);
       
     // DEPLOY: Pass oracles array, f, digest, and the QUEUE ADDRESS
     const OracleVerifier = await hre.ethers.getContractFactory("OracleVerifier", modelCreator);
