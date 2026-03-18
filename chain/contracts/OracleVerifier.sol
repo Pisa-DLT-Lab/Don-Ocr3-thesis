@@ -47,7 +47,7 @@ contract OracleVerifier {
         uint64 seqNr,
         bytes calldata report
     ) internal pure returns (bytes32) {
-        // Usa encodePacked per concatenare i byte senza padding (uguale all'append in Go)
+        // Use of encodePacked to concat the bytes without padding
         return keccak256(abi.encodePacked(configDigest, seqNr, report));
     }
 
