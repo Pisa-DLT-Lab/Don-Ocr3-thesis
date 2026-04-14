@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// Add the oracleQueue interface
-interface IOracleQueue {
-    function rewardOracle(address payable _oracle) external;
-}
+import "./IAggregator.sol";
 
 contract OracleVerifier {
-
-    IOracleQueue public oracleQueue;
+    address public owner;
+    IAggregator public aggregator;
 
     struct Result {
         int128[] flatMatrix;
@@ -21,28 +18,42 @@ contract OracleVerifier {
     mapping(uint64  => bool)   public usedSeqNr; // To avoid replay attacks
 
     mapping(address => bool) public isOracle;
-    uint8 public f;
-    bytes32 public expectedConfigDigest;
+    uint8 public f; // Maximum number of faulty nodes.
+    bytes32 public expectedConfigDigest; 
 
     event JobCompleted(uint256 indexed jobId, address indexed submitter, uint256 vectorLength, uint256 timestamp);
 
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only Owner allowed");
+        _;
+    }
+
+    modifier onlyAggregator() {
+        require(msg.sender == address(aggregator), "Only Aggregator allowed");
+        _;
+    }
+
+    function setAggregator(address _aggregatorAddress) external onlyOwner {
+        require(_aggregatorAddress != address(0), "Invalid address");
+        // Connect the interface to the specified address.
+        aggregator = IAggregator(_aggregatorAddress);
+    }
+
     // Constructor
-    constructor(address[] memory _oracles, uint8 _f, bytes32 _configDigest, address _queueAddress) {
+    constructor(address[] memory _oracles, uint8 _f, bytes32 _configDigest) {
         require(_oracles.length >= 3 * _f + 1, "Network too small for the given f");
         for (uint i = 0; i < _oracles.length; i++) {
             isOracle[_oracles[i]] = true;
         }
         f = _f;
         expectedConfigDigest = _configDigest;
-
-        // Connect the interface to the specified address
-        oracleQueue = IOracleQueue(_queueAddress);
+        owner = msg.sender;
     }
 
     // =====================================================================
     // CUSTOM HASH FUNCTION (Perfect mirror of the Go keyring logic)
     // =====================================================================
-    function _computeCustomHash(
+    function _computeCustomHash (
         bytes32 configDigest,
         uint64 seqNr,
         bytes calldata report
@@ -61,7 +72,7 @@ contract OracleVerifier {
         bytes32[] calldata rs, 
         bytes32[] calldata ss, 
         bytes32 rawVs // A single bytes32 parameter containing up to 32 packed 'v' values
-    ) external {
+    ) external onlyAggregator {
         // Basic checks and Anti-Replay protection
         require(configDigest == expectedConfigDigest, "Invalid ConfigDigest");
         require(!usedSeqNr[seqNr], "Sequence Number already used (Replay Attack)");
@@ -110,8 +121,9 @@ contract OracleVerifier {
 
         emit JobCompleted(jobId, msg.sender, _flatMatrix.length, block.timestamp);
 
-        // unlock the funds and reimburse the oracle's gas costs
-        oracleQueue.rewardOracle(payable(msg.sender));
+        // Call the Aggregator function that unlock the funds and 
+        // reimburses the oracle's gas costs.
+        aggregator.rewardOracle(payable(msg.sender));
     }
 
     function getResult(uint256 _jobId) external view returns (int128[] memory, address, uint256) {
