@@ -1,5 +1,36 @@
 const hre = require("hardhat");
 
+function validateConfigDigest(digest) {
+    const value = digest.startsWith("0x") || digest.startsWith("0X")
+        ? digest.slice(2)
+        : digest;
+
+    if (!/^[0-9a-fA-F]{64}$/.test(value)) {
+        throw new Error(`Invalid CONFIG_DIGEST: ${digest}`);
+    }
+
+    return `0x${value.toLowerCase()}`;
+}
+
+function resolveConfigDigest(numOracles) {
+    if (process.env.CONFIG_DIGEST) {
+        return validateConfigDigest(process.env.CONFIG_DIGEST);
+    }
+
+    if (numOracles === 7) {
+        // The exact configDigest captured for the original 7-node network.
+        return "0x0001019032f48532003abae19a45640493e4c80e455c96c1e3144ce7e7d33319";
+    }
+
+    if (numOracles === 4) {
+        // The exact configDigest captured for the original 4-node network.
+        return "0x0001eb5bd089a1e47f2e7bf9d2332c5b1d9717a4268f5441b3a61d2db8c05475";
+    }
+
+    // Safety fallback for custom configurations when no generated digest is supplied.
+    return "0x0000000000000000000000000000000000000000000000000000000000000000";
+}
+
 async function main() {
     console.log("\n=======================================================");
     console.log(" STARTING DEPLOYMENT: OracleQueue & OracleVerifier");
@@ -34,18 +65,7 @@ async function main() {
     // Read the number of oracles from the .env file (defaults to 4 if not found)
     const NUM_ORACLES = parseInt(process.env.NUM_ORACLES || "4");
 
-    let REAL_DIGEST;
-
-    if (NUM_ORACLES === 7) {
-    // The exact configDigest captured for the 7-node network
-        REAL_DIGEST = "0x0001019032f48532003abae19a45640493e4c80e455c96c1e3144ce7e7d33319";
-    } else if (NUM_ORACLES === 4) {
-    // Set it for 4 nodes
-        REAL_DIGEST = "0x0001eb5bd089a1e47f2e7bf9d2332c5b1d9717a4268f5441b3a61d2db8c05475"; 
-    } else {
-    // Safety fallback with zeros for custom configurations
-        REAL_DIGEST = "0x0000000000000000000000000000000000000000000000000000000000000000";
-    }
+    const REAL_DIGEST = resolveConfigDigest(NUM_ORACLES);
 
     const signers = await hre.ethers.getSigners();
     const modelCreator = signers[0]; // Wallet 0
@@ -57,13 +77,13 @@ async function main() {
     }
 
     // 2. Calculate the Byzantine fault tolerance f automatically
-    const fValue = Math.floor((NUM_ORACLES - 1) / 3);
+    const fValue = parseInt(process.env.FAULT_TOLERANCE || `${Math.floor((NUM_ORACLES - 1) / 3)}`, 10);
     
     console.log(`\nDeploying for a ${NUM_ORACLES}-node network (f=${fValue})...`);
     console.log("- ModelCreator (Deployer):", modelCreator.address);
     console.log("- Oracles Array:", oraclesArray);
     console.log("- Calculated 'f' value:", fValue);
-    //console.log("- CONFIG DIGEST UTILIZZATO:", REAL_DIGEST);
+    console.log("- CONFIG DIGEST UTILIZZATO:", REAL_DIGEST);
       
     // DEPLOY: Pass oracles array, f, digest, and the QUEUE ADDRESS
     const OracleVerifier = await hre.ethers.getContractFactory("OracleVerifier", modelCreator);

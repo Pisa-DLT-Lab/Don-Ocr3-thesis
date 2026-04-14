@@ -9,7 +9,8 @@ The project proposes a novel decentralized application designed to address fair 
 * **chain**: Contains the Solidity smart contracts (`OracleQueue.sol`, `OracleVerifier.sol`), Hardhat configuration, and deployment scripts.
 * **oracle**: Contains the off-chain Oracle node backend written in Go, including the custom OCR3 (Off-Chain Reporting) plugin and listener.
 * **IpfsAgent**: Scripts and configurations for handling data storage and retrieval via IPFS.
-* **docker-compose.yml**: Orchestrates the Docker containers for the oracle network and testing environment.
+* **docker-compose.yml**: Static Docker Compose setup for the oracle network and testing environment.
+* **scripts**: Automation helpers for generating parametrized Docker Compose stacks and starting experiments.
 
 ## Tech Stack
 * **Blockchain/Smart Contracts:** Solidity, Hardhat, Ethers.js
@@ -44,28 +45,25 @@ To run this project locally, ensure you have the following installed on your mac
 ---
 
 ## How to Run the Project locally 
-Thanks to the Docker orchestration, booting the entire ecosystem is highly automated. 
-The `docker-compose` setup will:
+Thanks to the Docker orchestration, booting the entire ecosystem is highly automated.
+The recommended path is the generated stack script, which creates a parametrized Compose file for a selected number of oracles and network seed.
+
+The generated setup will:
 
 - Start the Hardhat local node
 - Wait for it to be ready
-- Deploy the smart contracts 
-- Boot the off-chain oracle nodes.
+- Fund the seed-derived oracle accounts in Hardhat
+- Deploy the smart contracts with the matching OCR config digest
+- Boot the off-chain oracle nodes
+- Apply deterministic simulated latency among oracle containers by default
 
 To test the full system, follow this chronological sequence.
 
-> **Note - Network Size:** To change the number of active oracles, uncomment the relevant services in the `docker-compose.yml` file and update the `NUM_ORACLES` variable in your `.env` file accordingly.
+> **Note - Generated Files:** The automation writes `docker-compose.generated.yml`, `generated/hardhat.config.generated.js`, `generated/deployContracts.generated.js`, and `generated/config-digests.json`. These are derived artifacts for a specific experiment configuration.
 
-> **Note - Latency Mode:** To enable latency mode (simulating real-world network delays), you must toggle the comments on the `ENTRYPOINT` instructions inside the `oracle/Dockerfile`:
-> ```dockerfile
-> # Latency mode (Simulates real network)
-> ENTRYPOINT ["/usr/local/bin/setup_network.sh"]
-> 
-> # Zero-Latency mode (Fast local testing)
-> #ENTRYPOINT ["/usr/local/bin/wait-for-deploy.sh"]
-> ```
+> **Note - Digest Cache:** The first run for a new configuration computes the OCR config digest. The result is saved in `generated/config-digests.json`, so rerunning the same parameters reuses the cached digest.
 
-> **Note - Byzantine Testing:** You can test the BFT consensus by simulating malicious node behavior. In the `docker-compose.yml` file, change a node's `MALICIOUS_MODE` environment variable to `"transmit_fail"`, `"timeout"`, or `"alter"`.
+> **Note - Byzantine Testing:** You can test the BFT consensus by simulating malicious node behavior. In the generated Compose file, change a node's `MALICIOUS_MODE` environment variable to `"transmit_fail"`, `"timeout"`, or `"alter"`.
 
 ---
 ## Step 1: Start the AI Backend and SSH Tunnel
@@ -91,19 +89,55 @@ python model_service_v2.py
 
 ## Step 2: Boot the Core Infrastructure
 
-Open a new terminal in the root directory (meanwhile start docker application) of the project and run:
+Open a new terminal in the root directory of the project. If `.env` does not exist, the runner creates it from `.env.example`.
+
+Run a generated experiment by passing:
+
+- `NUM_ORACLES`
+- `NETWORK_SEED`
+
+Example with 7 oracles and seed `123`:
 
 ```bash
-docker compose up --build
+scripts/run_generated_stack.sh 7 123
+```
+
+For 5 oracles:
+
+```bash
+scripts/run_generated_stack.sh 5 42
+```
+
+Simulated network latency is enabled by default. To disable it while keeping generated keys and Compose:
+
+```bash
+scripts/run_generated_stack.sh 7 123 --disable-latency
+```
+
+If the first OCR digest computation is slow, pre-pull the main images:
+
+```bash
+docker pull golang:1.24-alpine
+docker pull node:18-alpine
+docker pull alpine:latest
+docker pull ipfs/kubo:latest
+```
+
+If digest computation still needs more time:
+
+```bash
+scripts/run_generated_stack.sh 7 123 --digest-timeout-seconds 3600
 ```
 
 ### What happens under the hood
 
-- A local Hardhat blockchain is initialized
-- The `OracleVerifier` and `OracleQueue` smart contracts are compiled and deployed automatically
-- IPFS nodes are started for decentralized storage
-- Simulated latency instantiated among the containers
-- The Go-based OCR3 oracle nodes are built and begin listening to the blockchain
+- `scripts/generate_compose.py` generates a Compose stack for the requested number of oracles
+- Oracle private keys are deterministically derived from the seed
+- A generated Hardhat config funds those oracle accounts
+- The OCR config digest is computed and cached
+- `chain/scripts/deployContracts.js` deploys contracts using the selected digest from `CONFIG_DIGEST`
+- `oracle/setup_network_parametric.sh` assigns deterministic pseudo-random locations and applies `tc netem` latency by default
+- Docker Compose builds and starts the chain, IPFS, bootstrap, and oracle containers
 
 Wait until you see the message:
 
@@ -112,6 +146,16 @@ Wait until you see the message:
 ```
 
 in the Docker logs before proceeding.
+
+### Manual Static Compose Mode
+
+The original static Compose file is still available:
+
+```bash
+docker compose up --build
+```
+
+This mode uses the fixed services declared in `docker-compose.yml`. To change the network size manually, edit `docker-compose.yml` and `.env` consistently.
 
 ---
 
@@ -170,6 +214,12 @@ To stop execution:
 Press `CTRL+C` in the Docker terminal.
 
 To rebuild the containers:
+
+```bash
+docker compose -f docker-compose.generated.yml --env-file .env down -v
+```
+
+For the static Compose mode:
 
 ```bash
 docker compose down -v
