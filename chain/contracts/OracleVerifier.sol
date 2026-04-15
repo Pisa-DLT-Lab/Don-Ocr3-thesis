@@ -121,9 +121,8 @@ contract OracleVerifier {
 
         emit JobCompleted(jobId, msg.sender, _flatMatrix.length, block.timestamp);
 
-        // Call the Aggregator function that unlock the funds and 
-        // reimburses the oracle's gas costs.
-        aggregator.rewardOracle(payable(msg.sender));
+        // Call the Aggregator function that unlock the funds and triggers rewards.
+        aggregator.distributeRewards(payable(msg.sender), jobId);
     }
 
     function getResult(uint256 _jobId) external view returns (int128[] memory, address, uint256) {

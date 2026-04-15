@@ -1,7 +1,14 @@
 const hre = require("hardhat");
 // Use parseEther to convert the amount into Wei
-const REQUEST_FEE = hre.ethers.parseEther("0.02"); // Fee paid by the customer
-const ORACLE_REWARD = hre.ethers.parseEther("0.018"); // Reward to refund the oracle
+const REQUEST_FEE = hre.ethers.parseEther("0.01"); // Fee paid by the customer
+const ORACLE_REWARD = hre.ethers.parseEther("0.003"); // Reward to refund the oracle
+const MODEL_CREATOR_REWARD = hre.ethers.parseEther("0.002"); // Reward for the model creator
+const NUM_HOLDERS = 1000; // Number of data holders to simulate in the RoyaltyManager.
+
+// Generates a random Ethereum address (for testing purposes only).
+function randomAddress() {
+    return hre.ethers.Wallet.createRandom().address;
+}
 
 function validateConfigDigest(digest) {
     const value = digest.startsWith("0x") || digest.startsWith("0X")
@@ -42,7 +49,7 @@ async function main() {
     console.log("\n");
 
     // =========================================================
-    // 1. DEPLOY ORACLE QUEUE
+    // DEPLOY ORACLE QUEUE
     // =========================================================
     console.log("Deploying OracleQueue...");
     const OracleQueue = await hre.ethers.getContractFactory("OracleQueue");
@@ -55,7 +62,7 @@ async function main() {
     console.log("\n");
 
     // =========================================================
-    // 2. DEPLOY ORACLE VERIFIER
+    // DEPLOY ORACLE VERIFIER
     // =========================================================
     console.log("Deploying OracleVerifier...");
     // Read the number of oracles from the .env file (defaults to 4 if not found)
@@ -86,11 +93,27 @@ async function main() {
     console.log("\n");
 
     // =========================================================
-    // 3. DEPLOY AGGREGATOR CONTRACT
+    // DEPLOY ROYALTYMANAGER CONTRACT
+    // =========================================================
+    console.log("Deploying RoyaltyManager...");
+    console.log(`Number of data holders: ${NUM_HOLDERS}`);
+    const holdersArray = Array.from({ length: NUM_HOLDERS }, randomAddress);
+    const RoyaltyManager = await hre.ethers.getContractFactory("RoyaltyManager", modelCreator);
+    const royaltyManager = await RoyaltyManager.deploy(holdersArray, verifierAddress);
+    const royaltyManagerReceipt = await royaltyManager.deploymentTransaction().wait();
+    const royaltyManagerAddress = await royaltyManager.getAddress();
+    console.log("RoyaltyManager deployed to:", royaltyManagerAddress);
+    console.log("Gas used:", royaltyManagerReceipt.gasUsed.toString());
+
+    console.log("\n");
+
+    // =========================================================
+    // DEPLOY AGGREGATOR CONTRACT
     // =========================================================
     console.log("Deploying Aggregator...");
     const Aggregator = await hre.ethers.getContractFactory("Aggregator", modelCreator);
-    const xaggregator = await Aggregator.deploy(REQUEST_FEE, ORACLE_REWARD, verifierAddress, queueAddress);
+    const xaggregator = await Aggregator.deploy(REQUEST_FEE, ORACLE_REWARD, 
+        MODEL_CREATOR_REWARD, verifierAddress, queueAddress, royaltyManagerAddress);
     const aggregatorReceipt = await xaggregator.deploymentTransaction().wait();
     const aggregatorAddress = await xaggregator.getAddress();
     console.log("Aggregator deployed to:", aggregatorAddress);
@@ -99,7 +122,7 @@ async function main() {
     console.log("\n");
 
     // =========================================================
-    // 4. AUTHORIZATION (LINKING CONTRACTS)
+    // LINKING CONTRACTS
     // =========================================================
     console.log("Linking Aggregator in Queue...");
     const tx1 = await queue.setAggregator(aggregatorAddress);
@@ -112,7 +135,7 @@ async function main() {
     console.log("Transaction hash:", tx2.hash);
     console.log("Gas used:", receipt2.gasUsed.toString());
 
-    
+
     console.log("\n=======================================================");
     console.log(" DEPLOYMENT FINISHED SUCCESSFULLY!");
     console.log(` QUEUE_ADDRESS=${queueAddress}`);

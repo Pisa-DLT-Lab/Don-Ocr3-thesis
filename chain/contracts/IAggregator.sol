@@ -12,6 +12,6 @@ interface IAggregator {
         bytes32[] calldata ss, 
         bytes32 rawVs
     ) external;
-    function rewardOracle(address payable _oracle) external;
+    function distributeRewards(address payable _oracle, uint256 _jobId) external;
 }
 
