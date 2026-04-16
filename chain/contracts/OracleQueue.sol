@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract OracleQueue {
+import "./IOracleQueue.sol";
+
+contract OracleQueue is IOracleQueue {
     // The model creator is the owner of the contract
     address public owner;
     address public aggregator;
@@ -65,7 +67,11 @@ contract OracleQueue {
     // =========================================================
     // PHASE 1: CUSTOMER
     // =========================================================    
-    function requestAttribution(string calldata _ipfsCid, address sender, uint256 value) external onlyAggregator {
+    function requestAttribution(
+        string calldata _ipfsCid, 
+        address sender, 
+        uint256 value
+    ) external override onlyAggregator {
         uint256 currentReqId = requestCounter;
 
         // Save the new request in the queue
@@ -84,7 +90,7 @@ contract OracleQueue {
     // PHASE 2: MODEL CREATOR
     // =========================================================
     // The Model Creator calls this function after validating the request
-    function approveJob(uint256 _requestId) external onlyAggregator {
+    function approveJob(uint256 _requestId) external override onlyAggregator {
         // Fetch from the customer queue
         CustomerRequest storage req = customerQueue[_requestId];
         require(!req.isProcessed, "Request already approved");

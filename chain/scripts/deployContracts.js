@@ -112,8 +112,14 @@ async function main() {
     // =========================================================
     console.log("Deploying Aggregator...");
     const Aggregator = await hre.ethers.getContractFactory("Aggregator", modelCreator);
-    const xaggregator = await Aggregator.deploy(REQUEST_FEE, ORACLE_REWARD, 
-        MODEL_CREATOR_REWARD, verifierAddress, queueAddress, royaltyManagerAddress);
+    const xaggregator = await Aggregator.deploy(
+        REQUEST_FEE, 
+        ORACLE_REWARD, 
+        MODEL_CREATOR_REWARD, 
+        verifierAddress, 
+        queueAddress, 
+        royaltyManagerAddress
+    );
     const aggregatorReceipt = await xaggregator.deploymentTransaction().wait();
     const aggregatorAddress = await xaggregator.getAddress();
     console.log("Aggregator deployed to:", aggregatorAddress);
@@ -134,12 +140,18 @@ async function main() {
     const receipt2 = await tx2.wait();
     console.log("Transaction hash:", tx2.hash);
     console.log("Gas used:", receipt2.gasUsed.toString());
+    console.log("Linking Aggregator in RoyaltyManager...");
+    const tx3 = await royaltyManager.setAggregator(aggregatorAddress);
+    const receipt3 = await tx3.wait();
+    console.log("Transaction hash:", tx3.hash);
+    console.log("Gas used:", receipt3.gasUsed.toString());
 
 
     console.log("\n=======================================================");
-    console.log(" DEPLOYMENT FINISHED SUCCESSFULLY!");
+    console.log(" DEPLOYMENT COMPLETED SUCCESSFULLY!");
     console.log(` QUEUE_ADDRESS=${queueAddress}`);
     console.log(` VERIFIER_ADDRESS=${verifierAddress}`);
+    console.log(` ROYALTY_MANAGER_ADDRESS=${royaltyManagerAddress}`);
     console.log(` AGGREGATOR_ADDRESS=${aggregatorAddress}`);
     console.log("=======================================================\n");
 }

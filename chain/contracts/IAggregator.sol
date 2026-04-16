@@ -2,6 +2,10 @@
 pragma solidity ^0.8.0;
 
 interface IAggregator {
+    enum FilterType {
+        TOP_VALUES,
+        TOP_HOLDERS
+    }
     function requestAttribution(string calldata _ipfsCid) external payable;
     function approveJob(uint256 _requestId) external;
     function transmit(
@@ -13,5 +17,6 @@ interface IAggregator {
         bytes32 rawVs
     ) external;
     function distributeRewards(address payable _oracle, uint256 _jobId) external;
+    function setFilterPolicy(FilterType _filterType, uint256 _threshold) external;
+    function getFilterPolicy() external view returns (FilterType, uint256);
 }
-

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import "./IAggregator.sol";
 import "./IOracleQueue.sol";
 import "./IOracleVerifier.sol";
 import "./IRoyaltyManager.sol";
 
-contract Aggregator {
+contract Aggregator is IAggregator {
     address public owner; // Model creator address.
     uint256 public queryFee; // Fee paid by end user for a request.
     uint256 public oracleReward; // Reward for the oracle that executes the job.
@@ -13,6 +14,8 @@ contract Aggregator {
     IOracleVerifier public verifier;
     IOracleQueue public queue;
     IRoyaltyManager public manager;
+    FilterType public filterType; // Type of filter to apply on the data scores for reward distribution.
+    uint256 public filterThreshold; // Threshold value for filtering (e.g., number of top values/holders).
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only Owner allowed");
@@ -42,11 +45,13 @@ contract Aggregator {
         verifier = IOracleVerifier(_verifierAddress);
         queue = IOracleQueue(_queueAddress);
         manager = IRoyaltyManager(_managerAddress);
+        filterType = FilterType.TOP_VALUES; // Default filter type.
+        filterThreshold = 100; // Default threshold.
     }
 
     // Forwards an attribution request to the OracleQueue contract.
     // Requires the end user to pay a fee.
-    function requestAttribution(string calldata _ipfsCid) external payable {
+    function requestAttribution(string calldata _ipfsCid) external override payable {
         // Base check on the exact payment
         require(msg.value == queryFee, "Amount error: must pay the right queryFee"); 
         // Forward request to OracleQueue
@@ -55,7 +60,7 @@ contract Aggregator {
 
     // Forwards a request approval to the OracleQueue contract.
     // This function can only be called by the model creator.
-    function approveJob(uint256 _requestId) external onlyOwner {
+    function approveJob(uint256 _requestId) external override onlyOwner {
         queue.approveJob(_requestId);
     }
 
@@ -68,7 +73,7 @@ contract Aggregator {
         bytes32[] calldata rs, 
         bytes32[] calldata ss, 
         bytes32 rawVs
-    ) external {
+    ) external override {
         // Forward to OracleVerifier.
         verifier.transmit(
             configDigest,
@@ -83,7 +88,7 @@ contract Aggregator {
     // This function is called automatically by the OracleVerifier contract
     // at the end of the "transmit" function to refund the Oracle that executed the job
     // and distribute the rewards to the model creator.
-    function distributeRewards(address payable _oracle, uint256 _jobId) external onlyVerifier {
+    function distributeRewards(address payable _oracle, uint256 _jobId) external override onlyVerifier {
         // Check current balance.
         uint256 balance = address(this).balance;
         require(balance >= queryFee, "No funds");
@@ -97,5 +102,14 @@ contract Aggregator {
         // through the RoyaltyManager contract.
         uint256 holdersReward = queryFee - (oracleReward + modelCreatorReward); 
         manager.rewardHolders{value: holdersReward}(_jobId);
+    }
+
+    function setFilterPolicy(FilterType _filterType, uint256 _threshold) external override onlyOwner {
+        filterType = _filterType;
+        filterThreshold = _threshold;
+    }
+
+    function getFilterPolicy() external override view returns (FilterType, uint256) {
+        return (filterType, filterThreshold);
     }
 }

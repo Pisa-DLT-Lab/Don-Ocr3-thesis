@@ -1,12 +1,7 @@
 import os
-import sys
 import uuid
 import time
-import json
-import random
 import threading
-import subprocess
-import configparser
 import queue
 import numpy as np
 import torch
@@ -15,27 +10,28 @@ from flask import Flask, request, jsonify
 
 # --- MODEL IMPORTS ---
 import model_utils
+from torch.utils.data import DataLoader
+from dattri.algorithm.trak import TRAKAttributor
+from dattri.benchmark.datasets.shakespeare_char.data import CustomDataset
 from dattri.benchmark.models.nanoGPT.model import GPT, GPTConfig
+from dattri.task import AttributionTask
 
-# --- CONFIGURATION ---
-CONFIG_FILE = 'model_service_config.ini'
-config = configparser.ConfigParser()
-config.read(CONFIG_FILE)
-
-APP_PORT = int(config['APPLICATION']['port'])
-APP_HOST = config['APPLICATION']['host']
-
-# Model parameters
-meta_path = config['MODEL']['meta_path']
-checkpoint_path = config['MODEL']['checkpoint_path']
-device = config['MODEL']['device']
-block_size = int(config['MODEL']['block_size'])
-seed = int(config['MODEL']['seed'])
-max_new_tokens = int(config['MODEL']['max_new_tokens'])
-temperature = float(config['MODEL']['temperature'])
-top_k = int(config['MODEL']['top_k'])
-
+APP_PORT = 53000
+APP_HOST = "localhost"
 TEMP_DIR = "./tmp_jobs"
+TRAIN_DATASET_PATH = "./nanoGPT/data/shakespeare_char/train.bin"
+CHECKPOINT_PATH = "./nanoGPT/out-shakespeare-char/ckpt.pt"
+META_PATH = "./nanoGPT/data/shakespeare_char/meta.pkl"
+DEVICE = "cpu"
+NUM_SAMPLES = 1
+MAX_NEW_TOKENS = 300
+TEMPERATURE = 0.8
+TOP_K = 200
+BLOCK_SIZE = 64
+BATCH_SIZE = 256
+SEED = 1337
+NORM_FACTOR = 1e18
+
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 app = Flask(__name__)
@@ -47,40 +43,109 @@ JOB_QUEUE = queue.Queue()
 
 # Global model variables
 ctx = nullcontext()
-torch.manual_seed(seed)
+torch.manual_seed(SEED)
+train_data = np.memmap(TRAIN_DATASET_PATH, dtype=np.uint16, mode='r')
+train_dataset = CustomDataset(train_data, BLOCK_SIZE)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
+encode_f, decode_f = model_utils.load_meta(META_PATH)
+encode = encode_f
+decode = decode_f
 model = None
-encode = None
-decode = None
+checkpoints_list = None
 
-def load_model_logic():
-    global model, encode, decode
+def softmax(x):
+    e = np.exp(x - np.max(x))  # stability trick
+    return e / e.sum()
+
+def loss_func(params, data_target_pair):
+    x, y = data_target_pair
+    x_t = x.unsqueeze(0)
+    y_t = y.unsqueeze(0)
+    _, loss = torch.func.functional_call(model, params, (x_t, y_t))
+    logp = -loss
+    return logp - torch.log(1 - torch.exp(logp))
+
+def correctness_p(params, image_label_pair):
+    x, y = image_label_pair
+    x_t = x.unsqueeze(0)
+    y_t = y.unsqueeze(0)
+    _, loss = torch.func.functional_call(model, params, (x_t, y_t))
+    p = torch.exp(-loss)
+    return p
+
+def load_model():
+    global model
     print("Loading model...")
-    encode_f, decode_f = model_utils.load_meta(meta_path)
-    encode = encode_f
-    decode = decode_f
-
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
     gptconf = GPTConfig(**checkpoint['model_args'])
     model = GPT(gptconf)
     state_dict = checkpoint['model']
-
     unwanted_prefix = '_orig_mod.'
     for k,v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-
     model.load_state_dict(state_dict)
     model.eval()
-    model.to(device)
+    model.to(DEVICE)
     print("Model loaded and ready.")
+
+def load_model_from_checkpoint(ckpt_path, device):
+    # TODO: This forces some extra memory usage
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    state_dict = checkpoint["model"]
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("_orig_mod."):
+            new_state_dict[k[len("_orig_mod.") :]] = v
+        else:
+            new_state_dict[k] = v
+    return new_state_dict
 
 def generate_text(prompt):
     start_ids = encode(prompt)
-    x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
+    x = (torch.tensor(start_ids, dtype=torch.long, device=DEVICE)[None, ...])
     with torch.no_grad():
         with ctx:
-            y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
+            y = model.generate(x, MAX_NEW_TOKENS, temperature=TEMPERATURE, top_k=TOP_K)
             return decode(y[0].tolist())
+
+# --- ATTRIBUTION LOGIC ---
+def compute_attribution(job_id, input_file, output_file, method):
+    if method == "trak":
+        # Prepare test dataset from model output
+        model_utils.convert(encode, input_file, os.path.join(TEMP_DIR, f'val_{job_id}.bin'))
+        val_data = np.memmap(os.path.join(TEMP_DIR, f'val_{job_id}.bin'), dtype=np.uint16, mode='r')
+        val_dataset = CustomDataset(val_data, BLOCK_SIZE)
+        val_loader = DataLoader(
+            val_dataset, 
+            batch_size=BATCH_SIZE,
+            shuffle=False
+        )
+        task = AttributionTask(
+            loss_func=loss_func, 
+            model=model, 
+            checkpoints=checkpoints_list
+        )
+        attributor = TRAKAttributor(
+            task=task,
+            correct_probability_func=correctness_p,
+            projector_kwargs={"device": DEVICE},
+            device=DEVICE
+        )
+        with torch.no_grad():
+            attributor.cache(train_loader)
+            score = attributor.attribute(val_loader)
+            np.savetxt(output_file, score.detach().cpu().numpy())
+    # For testing purposes, we can generate dummy attribution values 
+    # instead of running the full TRAK pipeline.
+    elif method == "dummy":
+        size = len(train_data) // BLOCK_SIZE
+        mu, sigma = 3., 1.  # mean and standard deviation
+        values = np.random.lognormal(mu, sigma, size).tolist() # Generate dummy attribution values
+        np.savetxt(output_file, values)
+    else:
+        raise ValueError(f"Unknown attribution method: {method}")
+    
 
 def run_full_process(job_id, prompt):
     print(f"[JOB {job_id}] Step 1: Generating text...")
@@ -91,26 +156,19 @@ def run_full_process(job_id, prompt):
     try:
         # A. Generation
         generated_story = generate_text(prompt)
-        print(f"[JOB {job_id}] Generated text (len={len(generated_story)}).")
+        print(f"[JOB {job_id}] Generated text.")
 
         # B. Write to file
         with open(input_filename, "w", encoding="utf-8") as f:
             f.write(generated_story)
 
         # C. Attribution (Subprocess)
-        print(f"[JOB {job_id}] Step 2: Starting Attribution (Subprocess)...")
-        cmd = [sys.executable, "model_attributor.py", input_filename, output_filename]
-
-        # Run external script and capture output/errors
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            # If it fails, print the stderr from the subprocess
-            print(f"STDERR from subprocess:\n{result.stderr}")
-            raise Exception(f"Attributor Error: {result.stderr}")
-
-        if not os.path.exists(output_filename):
-            raise Exception("Output file not found (Attributor failed silently?)")
+        print(f"[JOB {job_id}] Step 2: Computing Attribution...")
+        start_time = time.time()
+        compute_attribution(job_id, input_filename, output_filename, method="dummy")
+        end_time = time.time() - start_time
+        print(f"[JOB {job_id}] Attribution computed in {end_time:.2f} seconds.")
+        # cmd = [sys.executable, "model_attributor.py", input_filename, output_filename]
 
         # D. Read and Aggregate results
         print(f"[JOB {job_id}] Step 3: Reading results...")
@@ -123,15 +181,17 @@ def run_full_process(job_id, prompt):
         else:
             aggregated_scores = np.array([raw_data])
 
-        if aggregated_scores.ndim == 0: aggregated_scores = np.array([aggregated_scores])
+        if aggregated_scores.ndim == 0: 
+            aggregated_scores = np.array([aggregated_scores])
 
-        # E. Convert to BigInt strings
+        # E. Normalize the result and convert to BigInt strings
+        normalized_scores = softmax(aggregated_scores)
         blockchain_ready_scores = []
-        for score in aggregated_scores:
+        for score in normalized_scores:
             # Protection against NaN or Infinity
-            if np.isnan(score) or np.isinf(score): score = 0.0
-
-            int_val = int(float(score) * 1e18)
+            if np.isnan(score) or np.isinf(score): 
+                score = 0.0
+            int_val = int(float(score) * NORM_FACTOR)
             blockchain_ready_scores.append(str(int_val))
 
         # F. Save Result
@@ -213,7 +273,9 @@ def get_result(job_id):
     return jsonify(job), 200
 
 if __name__ == '__main__':
-    load_model_logic()
+    # Load the model.
+    load_model()
+    checkpoints_list = [load_model_from_checkpoint(CHECKPOINT_PATH, DEVICE)]
 
     # Start the background worker before exposing the API
     threading.Thread(target=background_worker, daemon=True).start()

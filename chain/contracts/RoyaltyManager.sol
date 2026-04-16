@@ -1,18 +1,34 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import "./IAggregator.sol";
 import "./IOracleVerifier.sol";
 
 contract RoyaltyManager {
+    address public owner; // Owner address.
     address[] public holders; // Array of data holders' addresses.
     IOracleVerifier public verifier; // Link to the OracleVerifier contract.
+    IAggregator public aggregator; // Link to the Aggregator contract.
     mapping(address => uint256) public balances; // Stores account balances for each holder.
     event RewardsDistributed(uint256 indexed jobId); // Emitted when rewards are distributed.
+    uint256 public norm_factor = 1e18; // Normalization factor for score distribution.
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only Owner allowed");
+        _;
+    }
 
     constructor(address[] memory _holders, address _verifierAddress) {
         require(_holders.length > 0, "No holders provided");
         holders = _holders;
         verifier = IOracleVerifier(_verifierAddress);
+        owner = msg.sender;
+    }
+
+    function setAggregator(address _aggregatorAddress) external onlyOwner {
+        require(_aggregatorAddress != address(0), "Invalid address");
+        // Connect the interface to the specified address.
+        aggregator = IAggregator(_aggregatorAddress);
     }
 
     // Distributes rewards to data holders based on the job result.
@@ -22,17 +38,15 @@ contract RoyaltyManager {
         (int128[] memory data, , ) = verifier.getResult(_jobId);
         // Distribute rewards proportionally based on data scores.
         uint128 u;
-        uint32 chunkId;
         uint32 ownerId;
-        uint64 score;
+        uint96 score;
         for (uint i = 0; i < data.length; i++) {
             // Decode result data based on the 
-            // [chunkId (32 bits) | ownerId (32 bits) | score (64 bits)] encoding scheme.
+            // [ownerId (32 bits) | score (96 bits)] encoding scheme.
             u = uint128(data[i]);
-            chunkId = uint32(u >> 96); // first 32 bits
-            ownerId = uint32((u >> 64) & 0xFFFFFFFF); // next 32 bits
-            score = uint64(u); // last 64 bits
-            uint256 payment = (msg.value * uint256(score)) / type(uint64).max;
+            ownerId = uint32(u >> 96); // first 32 bits
+            score = uint96(u & ((1 << 96) - 1)); // last 96 bits
+            uint256 payment = (msg.value * uint256(score)) / norm_factor;
             balances[holders[ownerId]] += payment;
         }
         emit RewardsDistributed(_jobId); // Notify reward distribution.

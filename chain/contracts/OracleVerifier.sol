@@ -2,8 +2,9 @@
 pragma solidity ^0.8.0;
 
 import "./IAggregator.sol";
+import "./IOracleVerifier.sol";
 
-contract OracleVerifier {
+contract OracleVerifier is IOracleVerifier {
     address public owner;
     IAggregator public aggregator;
 
@@ -72,7 +73,7 @@ contract OracleVerifier {
         bytes32[] calldata rs, 
         bytes32[] calldata ss, 
         bytes32 rawVs // A single bytes32 parameter containing up to 32 packed 'v' values
-    ) external onlyAggregator {
+    ) external override onlyAggregator {
         // Basic checks and Anti-Replay protection
         require(configDigest == expectedConfigDigest, "Invalid ConfigDigest");
         require(!usedSeqNr[seqNr], "Sequence Number already used (Replay Attack)");
@@ -125,12 +126,12 @@ contract OracleVerifier {
         aggregator.distributeRewards(payable(msg.sender), jobId);
     }
 
-    function getResult(uint256 _jobId) external view returns (int128[] memory, address, uint256) {
+    function getResult(uint256 _jobId) external override view returns (int128[] memory, address, uint256) {
         require(results[_jobId].saved, "Result not found");
         return (results[_jobId].flatMatrix, results[_jobId].submitter, results[_jobId].timestamp);
     }
 
-    function isCompleted(uint256 _jobId) external view returns (bool) {
+    function isCompleted(uint256 _jobId) external override view returns (bool) {
         return results[_jobId].saved;
     }
 }
