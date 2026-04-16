@@ -19,6 +19,7 @@ from dattri.task import AttributionTask
 APP_PORT = 53000
 APP_HOST = "localhost"
 TEMP_DIR = "./tmp_jobs"
+TRAIN_DATASET_HOLDERS_PATH = "./nanoGPT/data/shakespeare_char/holders.txt"
 TRAIN_DATASET_PATH = "./nanoGPT/data/shakespeare_char/train.bin"
 CHECKPOINT_PATH = "./nanoGPT/out-shakespeare-char/ckpt.pt"
 META_PATH = "./nanoGPT/data/shakespeare_char/meta.pkl"
@@ -31,6 +32,8 @@ BLOCK_SIZE = 64
 BATCH_SIZE = 256
 SEED = 1337
 NORM_FACTOR = 1e18
+FILTER_POLICIES = ["TOP_VALUES", "TOP_HOLDERS"]
+HOLDERS = np.loadtxt(TRAIN_DATASET_HOLDERS_PATH, dtype=int).tolist()
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -140,14 +143,57 @@ def compute_attribution(job_id, input_file, output_file, method):
     # instead of running the full TRAK pipeline.
     elif method == "dummy":
         size = len(train_data) // BLOCK_SIZE
-        mu, sigma = 3., 1.  # mean and standard deviation
-        values = np.random.lognormal(mu, sigma, size).tolist() # Generate dummy attribution values
-        np.savetxt(output_file, values)
+        values = np.random.exponential(1, size)
+        values = values / values.sum()
+        np.savetxt(output_file, values.tolist())
     else:
         raise ValueError(f"Unknown attribution method: {method}")
-    
 
-def run_full_process(job_id, prompt):
+def process_attribution_scores(raw_data, filter_policy, threshold):
+    # Process raw attribution scores: aggregate if needed, then normalize
+    if raw_data.ndim == 2:
+        normalized_scores = softmax(np.mean(raw_data, axis=1)).tolist()
+    elif raw_data.ndim == 1:
+        normalized_scores = raw_data.tolist()
+    else:
+        raise ValueError("Unexpected shape of attribution scores")
+
+    # Check whether the length of scores matches the number of holders.
+    if len(normalized_scores) != len(HOLDERS):
+        raise ValueError("Scores and holders length mismatch")
+
+    # Apply filtering policy.
+    combined = list(zip(HOLDERS, normalized_scores))
+    top_results = None
+    if filter_policy == "TOP_VALUES":
+        # Sort points by score and take top K points.
+        sorted_list = sorted(combined, key=lambda item: item[1], reverse=True)
+        top_results = sorted_list[:threshold]
+    elif filter_policy == "TOP_HOLDERS":
+        # Group by holder and sum scores, then take top K holders.
+        res = dict()
+        for holder, score in combined:
+            if holder in res:
+                res[holder] += score
+            else:
+                res[holder] = score
+        top_results = sorted(res.items(), key=lambda item: item[1], reverse=True)[:threshold]
+
+    # Results should be sorted by holder id in ascending order.
+    top_results = sorted(top_results, key=lambda item: item[0], reverse=False)
+    # And then unpacked into separate lists.
+    holder_ids, scores = zip(*top_results)
+    # Convert scores to BigInts for blockchain compatibility.
+    int_scores = []
+    for s in scores:
+        # Protection against NaN or Infinity
+        if np.isnan(s) or np.isinf(s): 
+            s = 0.0
+        int_val = int(float(s) * NORM_FACTOR)
+        int_scores.append(int_val)
+    return list(holder_ids), list(int_scores)
+
+def run_full_process(job_id, prompt, filter_policy, threshold):
     print(f"[JOB {job_id}] Step 1: Generating text...")
 
     input_filename = os.path.join(TEMP_DIR, f"{job_id}.in")
@@ -168,35 +214,15 @@ def run_full_process(job_id, prompt):
         compute_attribution(job_id, input_filename, output_filename, method="dummy")
         end_time = time.time() - start_time
         print(f"[JOB {job_id}] Attribution computed in {end_time:.2f} seconds.")
-        # cmd = [sys.executable, "model_attributor.py", input_filename, output_filename]
 
         # D. Read and Aggregate results
-        print(f"[JOB {job_id}] Step 3: Reading results...")
+        print(f"[JOB {job_id}] Step 3: Reading and aggregating attribution results...")
         raw_data = np.loadtxt(output_filename)
+        holder_ids, scores = process_attribution_scores(raw_data, filter_policy, threshold)
 
-        if raw_data.ndim == 2:
-            aggregated_scores = np.mean(raw_data, axis=1)
-        elif raw_data.ndim == 1:
-            aggregated_scores = raw_data
-        else:
-            aggregated_scores = np.array([raw_data])
-
-        if aggregated_scores.ndim == 0: 
-            aggregated_scores = np.array([aggregated_scores])
-
-        # E. Normalize the result and convert to BigInt strings
-        normalized_scores = softmax(aggregated_scores)
-        blockchain_ready_scores = []
-        for score in normalized_scores:
-            # Protection against NaN or Infinity
-            if np.isnan(score) or np.isinf(score): 
-                score = 0.0
-            int_val = int(float(score) * NORM_FACTOR)
-            blockchain_ready_scores.append(str(int_val))
-
-        # F. Save Result
+        # E. Save Result
         with jobs_lock:
-            JOBS[job_id]["result"] = blockchain_ready_scores
+            JOBS[job_id]["result"] = {"holder_ids": holder_ids, "scores": scores}
             JOBS[job_id]["status"] = "completed"
 
         print(f"[JOB {job_id}] COMPLETED SUCCESSFULLY!")
@@ -218,7 +244,7 @@ def background_worker():
     from the queue and execute the AI. This grants no parallel executions
     """
     while True:
-        job_id, prompt = JOB_QUEUE.get()
+        job_id, prompt, filter_policy, threshold = JOB_QUEUE.get()
 
         # Update the status to "processing" only when the job starts
         with jobs_lock:
@@ -226,7 +252,7 @@ def background_worker():
                 JOBS[job_id]["status"] = "processing"
 
         try:
-            run_full_process(job_id, prompt)
+            run_full_process(job_id, prompt, filter_policy, threshold)
         except Exception as e:
             print(f"[WORKER] Unexpected error for the job {job_id}: {e}")
         finally:
@@ -246,6 +272,10 @@ def attribute():
     job_id = data.get('job_id') or data.get('cid') or str(uuid.uuid4())
 
     prompt = data['text']
+    filter_policy = data.get('filter_policy', FILTER_POLICIES[0])
+    threshold = data.get('threshold', 100)
+    if filter_policy not in FILTER_POLICIES:
+        return jsonify({"error": "Invalid filter policy"}), 400
 
     with jobs_lock:
         if job_id in JOBS:
@@ -260,7 +290,7 @@ def attribute():
 
     print(f"--> [NEW] Queuing Job {job_id}")
     # QUEUE THE JOB 
-    JOB_QUEUE.put((job_id, prompt))
+    JOB_QUEUE.put((job_id, prompt, filter_policy, threshold))
 
     return jsonify({"message": "Job Queued", "job_id": job_id}), 202
 
