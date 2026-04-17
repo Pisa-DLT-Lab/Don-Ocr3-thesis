@@ -15,15 +15,13 @@ async function main() {
     const ipfsUrl = process.env.IPFS_API_URL || 'http://127.0.0.1:5001';
     const ipfs = create({ url: ipfsUrl });
 
-    const queueAddress = process.env.QUEUE_ADDRESS;
-    const verifierAddress = process.env.VERIFIER_ADDRESS;
+    const aggregatorAddress = process.env.AGGREGATOR_ADDRESS;
 
     // Use Signer #10 as the 'Customer' to prevent nonce collisions with Oracles or Creator
     const signers = await hre.ethers.getSigners();
     const customerWallet = signers[10];
 
-    const queueContract = await hre.ethers.getContractAt("OracleQueue", queueAddress, customerWallet);
-    const verifierContract = await hre.ethers.getContractAt("OracleVerifier", verifierAddress);
+    const aggregatorContract = await hre.ethers.getContractAt("Aggregator", aggregatorAddress, customerWallet);
 
     // Initialize CSV Telemetry Data
     const csvFile = "benchmark_results.csv";
@@ -55,16 +53,16 @@ async function main() {
         const approvalPromise = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("Timeout: LogNewJobForOracles event missed")), 45000);
             
-            queueContract.once("LogNewJobForOracles", (jobId) => {
+            aggregatorContract.once("LogNewJobForOracles", (jobId) => {
                 clearTimeout(timeout);
                 resolve(jobId);
             });
         });
 
         process.stdout.write(`[2/4] On-Chain Customer Request (Tx)... `);
-        const paymentAmount = hre.ethers.parseEther("0.02");
+        const paymentAmount = await aggregatorContract.queryFee();
         
-        const tx = await queueContract.requestAttribution(cidString, { value: paymentAmount });
+        const tx = await aggregatorContract.requestAttribution(cidString, { value: paymentAmount });
         const receipt = await tx.wait();
         const tPhase1 = performance.now();
         console.log(`[+] ${(tPhase1 - tIpfs).toFixed(0)} ms`);
@@ -73,7 +71,7 @@ async function main() {
         let currentJobId = null;
         for (const log of receipt.logs) {
             try {
-                const parsed = queueContract.interface.parseLog(log);
+                const parsed = aggregatorContract.interface.parseLog(log);
                 if (parsed.name === "LogNewCustomerRequest") {
                     currentJobId = parsed.args[0];
                     break;
@@ -85,7 +83,7 @@ async function main() {
         // PHASE 3: Validation & Approval (Model Creator Tx)
         // ---------------------------------------------------------------------
         process.stdout.write(`[3/4] On-Chain Approval (Model Creator Tx)... `);
-        await approvalPromise; // Resolves when the separate Creator script approves the job
+        const approvedJobId = await approvalPromise; // Resolves when the separate Creator script approves the job
         const tPhase2 = performance.now();
         console.log(`[+] ${(tPhase2 - tPhase1).toFixed(2)} ms`);
 
@@ -101,15 +99,15 @@ async function main() {
             }, 300000); // 5-minute threshold for AI computation and P2P rounds
 
             const fulfillmentListener = (jobId, submitter) => {
-                if (currentJobId !== null && jobId.toString() === currentJobId.toString()) {
+                if (approvedJobId !== null && jobId.toString() === approvedJobId.toString()) {
                     clearTimeout(timeout);
                     winnerAddress = submitter;
-                    verifierContract.off("JobCompleted", fulfillmentListener);
+                    aggregatorContract.off("JobCompleted", fulfillmentListener);
                     resolve();
                 }
             };
 
-            verifierContract.on("JobCompleted", fulfillmentListener);
+            aggregatorContract.on("JobCompleted", fulfillmentListener);
         });
 
         const tPhase3 = performance.now();

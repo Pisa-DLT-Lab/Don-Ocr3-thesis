@@ -30,17 +30,21 @@ import (
 // It handles the Oracles discovery of peer by communicating with them and giving the other peer informations
 func runBootstrap(ctx context.Context, n, f int, seed int64, listen, announce string) error {
 	cc, _, err := buildContractConfig(n, f, seed)
-	if err != nil { return err }
-	
+	if err != nil {
+		return err
+	}
+
 	_, oracles, err := deriveAllNodes(n, seed)
-	if err != nil {	return err }
-	
+	if err != nil {
+		return err
+	}
+
 	// Collect the Peer IDs of all active oracles to authorize them on the network
 	peerIDs := make([]string, 0, n)
-	for _, o := range oracles { 
-		peerIDs = append(peerIDs, o.PeerID) 
+	for _, o := range oracles {
+		peerIDs = append(peerIDs, o.PeerID)
 	}
-	
+
 	// DNS Resolution: crucial for Docker container networking mapping
 	announceIP, err := resolveHostnamePortToIP(announce)
 	if err != nil {
@@ -56,18 +60,20 @@ func runBootstrap(ctx context.Context, n, f int, seed int64, listen, announce st
 
 	// Initialize the networking layer (libp2p)
 	peer, err := networking.NewPeer(networking.PeerConfig{
-		PrivKey: 				priv, 
-		Logger: 				quietLogger{log.New(os.Stdout, "", 0)}, 
-		V2ListenAddresses: 		[]string{listen}, 
-		V2AnnounceAddresses: 	[]string{announceIP},
-		V2DeltaReconcile:		10 * time.Second,
+		PrivKey:             priv,
+		Logger:              quietLogger{log.New(os.Stdout, "", 0)},
+		V2ListenAddresses:   []string{listen},
+		V2AnnounceAddresses: []string{announceIP},
+		V2DeltaReconcile:    10 * time.Second,
 		V2EndpointConfig: networking.EndpointConfigV2{
 			IncomingMessageBufferSize: 100,
 			OutgoingMessageBufferSize: 50,
 		},
-		MetricsRegisterer:		prometheus.NewRegistry(),
+		MetricsRegisterer: prometheus.NewRegistry(),
 	})
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	bootstrapper, err := peer.OCR2BootstrapperFactory().NewBootstrapper(cc.ConfigDigest, peerIDs, nil, f)
 	if err != nil {
@@ -86,88 +92,94 @@ func runBootstrap(ctx context.Context, n, f int, seed int64, listen, announce st
 }
 
 // runOracle handles the initialization and lifecycle of an active OCR3 Oracle node.
-// It sets up the persistent network connections, injects dependencies into the 
+// It sets up the persistent network connections, injects dependencies into the
 // libocr core engine, and manages the execution of background asynchronous workers.
 func runOracle(ctx context.Context, id, n, f int, seed int64, bootAddr, listen, announce string) error {
 	// ==========================================
 	// 1. Environment Configuration & SECRETS
-	// ==========================================	
+	// ==========================================
 	privKeyHex := os.Getenv("PRIVATE_KEY")
 	if privKeyHex == "" {
 		log.Fatal("Critical Error: PRIVATE KEY variable not found. Check the docker-compose.yml")
 	}
 
 	// Strip the "0x" prefix if present to standardize the hex format
-    privKeyHex = strings.TrimPrefix(privKeyHex, "0x")
+	privKeyHex = strings.TrimPrefix(privKeyHex, "0x")
 
-	// Retrieval of the smart contract addresses from .env
-	verifierAddressHex := os.Getenv("VERIFIER_ADDRESS")
-	queueAddressHex := os.Getenv("QUEUE_ADDRESS") 
+	// Retrieval of the Aggregator smart contract address from .env
+	aggregatorAddressHex := os.Getenv("AGGREGATOR_ADDRESS")
 	ipfsUrl := getEnvironment("IPFS_API_URL", "http://ipfs:5001")
 
-	if verifierAddressHex == "" || queueAddressHex == "" {
-		log.Fatal("Critical: Contract addresses missing in .env")
+	if aggregatorAddressHex == "" {
+		log.Fatal("Critical: AGGREGATOR_ADDRESS missing in .env")
 	}
 
 	// Change into Address type
-	verifierAddress := common.HexToAddress(verifierAddressHex)
+	aggregatorAddress := common.HexToAddress(aggregatorAddressHex)
 	rpc := getEnvironment("CHAIN_RPC", "http://localhost:8545")
 
 	// ==========================================
 	// 2. Off-Chain Infrastructure Boot
-	// ==========================================	
+	// ==========================================
 	// Instantiate the IPFS Shell client for decentralized storage interaction
 	ipfsShell := shell.NewShell(ipfsUrl)
-	
-	// Spawn the asynchronous Event Listener in a dedicated goroutine.
-    // This decoupled architecture ensures that the blockchain subscription stream
-    // does not block the OCR consensus operations.
-	go startChainListener(ctx, rpc, verifierAddressHex, queueAddressHex, ipfsShell)
 
-	
+	// Spawn the asynchronous Event Listener in a dedicated goroutine.
+	// This decoupled architecture ensures that the blockchain subscription stream
+	// does not block the OCR consensus operations.
+	go startChainListener(ctx, rpc, aggregatorAddressHex, ipfsShell)
+
 	// ==========================================
 	// 3. P2P Networking Setup
-	// ==========================================	
+	// ==========================================
 	announceIP, err := resolveHostnamePortToIP(announce)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	bootIP, err := resolveHostnamePortToIP(bootAddr)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	// Generate deterministic contract configuration and digest for the consensus
 	cc, digester, err := buildContractConfig(n, f, seed)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	nodes, _, err := deriveAllNodes(n, seed)
 	if err != nil {
 		return err
-    }
+	}
 	me := nodes[id]
 
 	// Instantiate the P2P libp2p node for this oracle
 	peer, err := networking.NewPeer(networking.PeerConfig{
-		PrivKey: 				me.offKR.offPriv, 
-		Logger: 				quietLogger{log.New(os.Stdout, "", 0)},
-		V2ListenAddresses: 		[]string{listen}, 
-		V2AnnounceAddresses: 	[]string{announceIP}, 
+		PrivKey:             me.offKR.offPriv,
+		Logger:              quietLogger{log.New(os.Stdout, "", 0)},
+		V2ListenAddresses:   []string{listen},
+		V2AnnounceAddresses: []string{announceIP},
 		V2EndpointConfig: networking.EndpointConfigV2{
 			IncomingMessageBufferSize: 100,
 			OutgoingMessageBufferSize: 50,
-		},                      
-        V2DeltaReconcile:            10 * time.Second,           
-        MetricsRegisterer:           prometheus.NewRegistry(),   
+		},
+		V2DeltaReconcile:  10 * time.Second,
+		MetricsRegisterer: prometheus.NewRegistry(),
 	})
 
-	if err != nil { return err }
-	
+	if err != nil {
+		return err
+	}
+
 	bootPriv := deriveBootstrapPriv(seed)
 	bootPID, _ := ragetypes.PeerIDFromPrivateKey(bootPriv)
 
 	// ==========================================
-    // 4. EthTransmitter Initialization 
-    // ==========================================
-	// Pre-allocate RPC clients and cryptographic keys to guarantee low-latency 
-    // on-chain transaction broadcasting during the transmission phase.
-	transmitter, err := NewEthTransmitter(id, n, rpc, privKeyHex, verifierAddress, JobCache)
+	// 4. EthTransmitter Initialization
+	// ==========================================
+	// Pre-allocate RPC clients and cryptographic keys to guarantee low-latency
+	// on-chain transaction broadcasting during the transmission phase.
+	transmitter, err := NewEthTransmitter(id, n, rpc, privKeyHex, aggregatorAddress, JobCache)
 	if err != nil {
 		return fmt.Errorf("Failed to initialize ethTransmitter: %w", err)
 	}
@@ -178,41 +190,43 @@ func runOracle(ctx context.Context, id, n, f int, seed int64, bootAddr, listen, 
 	// Build the configuration arguments required by the libocr core state machine.
 	args := offchainreporting2plus.OCR3OracleArgs[struct{}]{
 		BinaryNetworkEndpointFactory: peer.OCR2BinaryNetworkEndpointFactory(),
-		// Connect to the Bootstrap node for peer discovery		
+		// Connect to the Bootstrap node for peer discovery
 		V2Bootstrappers: []commontypes.BootstrapperLocator{
 			{PeerID: bootPID.String(), Addrs: []string{bootIP}},
 		},
 		ContractConfigTracker: staticTracker{cc},
 		// Injecting our custom on-chain interaction logic
 		ContractTransmitter: transmitter,
-		Database: &memDB3{},
+		Database:            &memDB3{},
 		// Tuning the protocol limits to handle large array submissions
 		LocalConfig: ocrtypes.LocalConfig{
-			DevelopmentMode: 					ocrtypes.EnableDangerousDevelopmentMode,
-			BlockchainTimeout: 					30*time.Second, // Increased from 15 to 30
-			ContractConfigConfirmations:		1, 
-			ContractConfigTrackerPollInterval: 	5*time.Second, 
-			ContractConfigLoadTimeout: 			10*time.Second,
-			ContractTransmitterTransmitTimeout: 60*time.Second,  // Increased from 30 to 60
-			DatabaseTimeout: 					10*time.Second,
+			DevelopmentMode:                    ocrtypes.EnableDangerousDevelopmentMode,
+			BlockchainTimeout:                  30 * time.Second, // Increased from 15 to 30
+			ContractConfigConfirmations:        1,
+			ContractConfigTrackerPollInterval:  5 * time.Second,
+			ContractConfigLoadTimeout:          10 * time.Second,
+			ContractTransmitterTransmitTimeout: 60 * time.Second, // Increased from 30 to 60
+			DatabaseTimeout:                    10 * time.Second,
 		},
-		Logger: 				quietLogger{log.New(os.Stdout, "", 0)},
-		MetricsRegisterer: 		prometheus.NewRegistry(),
-		MonitoringEndpoint: 	noopMonitoring{},
+		Logger:                 quietLogger{log.New(os.Stdout, "", 0)},
+		MetricsRegisterer:      prometheus.NewRegistry(),
+		MonitoringEndpoint:     noopMonitoring{},
 		OffchainConfigDigester: digester,
-		OffchainKeyring: 		me.offKR, 
-		OnchainKeyring: 		me.onKR,
+		OffchainKeyring:        me.offKR,
+		OnchainKeyring:         me.onKR,
 		// Inject the custom Reporting Plugin containing our specific business logic (Attribution)
 		ReportingPluginFactory: attributionPluginFactory{
-			//oracleID:	id, 
+			//oracleID:	id,
 			//numOracles: n,
 			//rpcUrl: 	rpc,
-			//contractAddr: verifierAddress,
+			//contractAddr: aggregatorAddress,
 		},
 	}
 
 	oracle, err := offchainreporting2plus.NewOracle(args)
-	if err != nil { panic(err) }
+	if err != nil {
+		panic(err)
+	}
 
 	// Starts the internal state machine and consensus loops
 	oracle.Start()
@@ -227,7 +241,6 @@ func runOracle(ctx context.Context, id, n, f int, seed int64, bootAddr, listen, 
 	//}
 	return nil
 }
-
 
 func main() {
 
@@ -244,7 +257,7 @@ func main() {
 	p2pL := flag.String("p2p_listen", "", "")
 	p2pA := flag.String("p2p_announce", "", "")
 	flag.Parse()
-	
+
 	// OS Signal trapping for graceful shutdown (SIGTERM, SIGINT)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

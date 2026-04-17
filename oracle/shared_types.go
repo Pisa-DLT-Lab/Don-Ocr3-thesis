@@ -10,25 +10,24 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/smartcontractkit/libocr/commontypes"
 	ocrtypes "github.com/smartcontractkit/libocr/offchainreporting2plus/types"
-
-
 )
 
 // =============================================================================
-// JSON PAYKIAD STRUCTURES 
+// JSON PAYKIAD STRUCTURES
 // =============================================================================
 
 // AttributeRequest represents the JSON payload sent via POST to the Python AI service.
 type AttributeRequest struct {
-    JobId  string `json:"job_id"`  // Unique identifier for the attribution job
-    Text string `json:"text"` // Content downloaded from IPFS
+	JobId        string `json:"job_id"`        // Unique identifier for the attribution job
+	Text         string `json:"text"`          // Content downloaded from IPFS
+	FilterPolicy string `json:"filter_policy"` // Policy name expected by the model service
 }
 
 // AttributeResponse represents the expected JSON response from the Python AI polling endpoint.
 type AttributeResponse struct {
-    Status string   `json:"status"` // Job lifecycle state (e.g., "processing", "completed")
-    Result []string `json:"result"` // String representations of the calculated BigInt vector
-    Error  string   `json:"error,omitempty"` // Populated only if the AI computation fails
+	Status string          `json:"status"`          // Job lifecycle state (e.g., "processing", "completed")
+	Result AttributeResult `json:"result"`          // Full sorted holder-score result
+	Error  string          `json:"error,omitempty"` // Populated only if the AI computation fails
 }
 
 // =============================================================================
@@ -39,22 +38,24 @@ type AttributeResponse struct {
 // Strict ABI encoding ensures native data compatibility with the EVM Smart Contract.
 var (
 	// QueryArgs: Data proposed by the Round Leader to initialize consensus.
-	// Query: uint256 (JobId), string (IPFS CID)
+	// Query: uint256 (JobId), string (IPFS CID), uint8 (filter type), uint256 (threshold)
 	QueryArgs = abi.Arguments{
 		{Type: MustParseType("uint256")},
 		{Type: MustParseType("string")},
+		{Type: MustParseType("uint8")},
+		{Type: MustParseType("uint256")},
 	}
 
 	// ObservationArgs: The calculated data returned by individual Oracle nodes.
-    // Encodes: int128[] (Attribution Vector)
-    // Note: Optimized from int256[] to int128[] to leverage Solidity storage packing,
-    // significantly reducing gas costs during the final state transition.
+	// Encodes: int128[] (packed holder-score vector)
+	// Note: Optimized from int256[] to int128[] to leverage Solidity storage packing,
+	// significantly reducing gas costs during the final state transition.
 	ObservationArgs = abi.Arguments{
 		{Type: MustParseType("int128[]")},
 	}
 
 	// OutcomeArgs: The final, aggregated BFT consensus result.
-    // Encodes: uint256 (JobID), int128[] (Median Attribution Vector)
+	// Encodes: uint256 (JobID), int128[] (filtered median packed holder-score vector)
 	OutcomeArgs = abi.Arguments{
 		{Type: MustParseType("uint256")},
 		{Type: MustParseType("int128[]")},
@@ -71,7 +72,6 @@ func MustParseType(t string) abi.Type {
 	return ty
 }
 
-
 // =============================================================================
 // INFRASTRUCTURE STUBS
 // =============================================================================
@@ -81,6 +81,7 @@ func MustParseType(t string) abi.Type {
 // lines (QUERY/OBS/TRANSMIT).
 
 type quietLogger struct{ *log.Logger }
+
 func (l quietLogger) Trace(string, commontypes.LogFields)          {}
 func (l quietLogger) Debug(string, commontypes.LogFields)          {}
 func (l quietLogger) Info(string, commontypes.LogFields)           {}
@@ -89,6 +90,7 @@ func (l quietLogger) Error(msg string, f commontypes.LogFields)    { l.Println("
 func (l quietLogger) Critical(msg string, f commontypes.LogFields) { l.Println("CRIT", msg, f) }
 
 type noopMonitoring struct{}
+
 // noopMonitoring is a stub MonitoringEndpoint. In production you would export
 // libocr telemetry/logs to your monitoring system.
 func (noopMonitoring) SendLog([]byte) {}
@@ -102,13 +104,14 @@ type memDB3 struct {
 // ReadConfig returns the latest contract config the protocol should run with.
 // In a real deployment this would come from chain (via ContractConfigTracker)
 // and be persisted in a durable DB.
-func (m *memDB3) ReadConfig(context.Context) (*ocrtypes.ContractConfig, error) { 
-	return m.cfg, nil 
+func (m *memDB3) ReadConfig(context.Context) (*ocrtypes.ContractConfig, error) {
+	return m.cfg, nil
 }
 
 // WriteConfig stores the current contract config.
-func (m *memDB3) WriteConfig(_ context.Context, c ocrtypes.ContractConfig) error { 
-	m.cfg = &c; return nil 
+func (m *memDB3) WriteConfig(_ context.Context, c ocrtypes.ContractConfig) error {
+	m.cfg = &c
+	return nil
 }
 
 // ReadProtocolState returns protocol-internal persisted state (per configDigest).
@@ -152,8 +155,8 @@ func (m *memDB3) WriteProtocolState(_ context.Context, d ocrtypes.ConfigDigest, 
 	return nil
 }
 
-type staticTracker struct{ 
-	cfg ocrtypes.ContractConfig 
+type staticTracker struct {
+	cfg ocrtypes.ContractConfig
 }
 
 // staticTracker is a tiny ContractConfigTracker implementation that always
@@ -162,8 +165,12 @@ type staticTracker struct{
 // Real OCR runs with a ContractConfigTracker that watches chain logs / RPC for
 // config changes.
 func (t staticTracker) Notify() <-chan struct{} { return nil }
-func (t staticTracker) LatestConfigDetails(context.Context) (uint64, ocrtypes.ConfigDigest, error) { return 1, t.cfg.ConfigDigest, nil }
-func (t staticTracker) LatestConfig(context.Context, uint64) (ocrtypes.ContractConfig, error) { return t.cfg, nil }
+func (t staticTracker) LatestConfigDetails(context.Context) (uint64, ocrtypes.ConfigDigest, error) {
+	return 1, t.cfg.ConfigDigest, nil
+}
+func (t staticTracker) LatestConfig(context.Context, uint64) (ocrtypes.ContractConfig, error) {
+	return t.cfg, nil
+}
 func (t staticTracker) LatestBlockHeight(context.Context) (uint64, error) { return 1, nil }
 
 // =============================================================================
@@ -172,20 +179,24 @@ func (t staticTracker) LatestBlockHeight(context.Context) (uint64, error) { retu
 
 // JobState tracks the lifecycle of an off-chain computation.
 type JobState int
+
 const (
-	StatePending JobState = iota	// Background AI computation is in progress
-	StateCompleted					// Result vector is ready in local RAM
-	StateFailed						// Async task encountered a fatal error
+	StatePending   JobState = iota // Background AI computation is in progress
+	StateCompleted                 // Result vector is ready in local RAM
+	StateFailed                    // Async task encountered a fatal error
 )
 
 // JobData encapsulates all context required to process a specific request
 type JobData struct {
-	JobID     *big.Int
-	CID       string
-	State     JobState
-	Result    []*big.Int
-	Err       error
-	Processed bool // If true, it has been sent on chain
+	JobID           *big.Int
+	CID             string
+	FilterType      uint8
+	FilterPolicy    string
+	FilterThreshold *big.Int
+	State           JobState
+	Result          []*big.Int
+	Err             error
+	Processed       bool // If true, it has been sent on chain
 }
 
 // Reduce the requestId to uint64 because it is only an
@@ -195,14 +206,14 @@ type jobCache struct {
 	sync.RWMutex
 	LatestJobID *big.Int
 	jobs        map[uint64]*JobData
-	queue 		[]uint64 // FIFO array to maintain determinstic processing order for the Leader
+	queue       []uint64 // FIFO array to maintain determinstic processing order for the Leader
 }
 
 // Global instance initialized at startup
 var JobCache = &jobCache{
 	LatestJobID: big.NewInt(-1),
 	jobs:        make(map[uint64]*JobData),
-	queue:		 make([]uint64, 0),
+	queue:       make([]uint64, 0),
 }
 
 // enqueue safely registers a newly detected job, appending it to the processing queue.

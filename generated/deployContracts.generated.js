@@ -2,25 +2,31 @@
 // NUM_ORACLES=7
 // CONFIG_DIGEST=0x0001de4e7b0f5f1f8d1ed9551586374820cde9aca7aae609171c83ee3783463d
 const hre = require("hardhat");
+const REQUEST_FEE = hre.ethers.parseEther("0.01");
+const ORACLE_REWARD = hre.ethers.parseEther("0.003");
+const MODEL_CREATOR_REWARD = hre.ethers.parseEther("0.002");
+const NUM_HOLDERS = 1000;
+
+function randomAddress() {
+  return hre.ethers.Wallet.createRandom().address;
+}
 
 async function main() {
   console.log("\n=======================================================");
-  console.log(" STARTING GENERATED DEPLOYMENT: OracleQueue & OracleVerifier");
+  console.log(" STARTING GENERATED DEPLOYMENT: Aggregator facade stack");
   console.log("=======================================================\n");
 
   const [deployer] = await hre.ethers.getSigners();
   console.log(`Deploying contracts with the account: ${deployer.address}`);
 
-  console.log("\n[1/3] Deploying OracleQueue...");
+  console.log("\n[1/5] Deploying OracleQueue...");
   const OracleQueue = await hre.ethers.getContractFactory("OracleQueue");
-  const feeInWei = hre.ethers.parseEther("0.02");
-  const rewardInWei = hre.ethers.parseEther("0.018");
-  const queue = await OracleQueue.deploy(feeInWei, rewardInWei);
+  const queue = await OracleQueue.deploy();
   await queue.waitForDeployment();
   const queueAddress = await queue.getAddress();
   console.log(`OracleQueue deployed at: ${queueAddress}`);
 
-  console.log("\n[2/3] Deploying OracleVerifier...");
+  console.log("\n[2/5] Deploying OracleVerifier...");
   const NUM_ORACLES = parseInt(process.env.NUM_ORACLES || "7", 10);
   const REAL_DIGEST = process.env.CONFIG_DIGEST || "0x0001de4e7b0f5f1f8d1ed9551586374820cde9aca7aae609171c83ee3783463d";
   const signers = await hre.ethers.getSigners();
@@ -39,20 +45,45 @@ async function main() {
   console.log("- Oracles Array:", oraclesArray);
 
   const OracleVerifier = await hre.ethers.getContractFactory("OracleVerifier", modelCreator);
-  const verifier = await OracleVerifier.deploy(oraclesArray, fValue, REAL_DIGEST, queueAddress);
+  const verifier = await OracleVerifier.deploy(oraclesArray, fValue, REAL_DIGEST);
   await verifier.waitForDeployment();
   const verifierAddress = await verifier.getAddress();
   console.log(`OracleVerifier deployed at: ${verifierAddress}`);
 
-  console.log("\n[3/3] Authorizing Verifier in the Queue...");
-  const authTx = await queue.setVerifierAddress(verifierAddress);
-  await authTx.wait();
-  console.log("Authorization complete! Queue now trusts Verifier.");
+  console.log("\n[3/5] Deploying RoyaltyManager...");
+  const holdersArray = Array.from({ length: NUM_HOLDERS }, randomAddress);
+  const RoyaltyManager = await hre.ethers.getContractFactory("RoyaltyManager", modelCreator);
+  const royaltyManager = await RoyaltyManager.deploy(holdersArray, verifierAddress);
+  await royaltyManager.waitForDeployment();
+  const royaltyManagerAddress = await royaltyManager.getAddress();
+  console.log(`RoyaltyManager deployed at: ${royaltyManagerAddress}`);
+
+  console.log("\n[4/5] Deploying Aggregator...");
+  const Aggregator = await hre.ethers.getContractFactory("Aggregator", modelCreator);
+  const aggregator = await Aggregator.deploy(
+    REQUEST_FEE,
+    ORACLE_REWARD,
+    MODEL_CREATOR_REWARD,
+    verifierAddress,
+    queueAddress,
+    royaltyManagerAddress
+  );
+  await aggregator.waitForDeployment();
+  const aggregatorAddress = await aggregator.getAddress();
+  console.log(`Aggregator deployed at: ${aggregatorAddress}`);
+
+  console.log("\n[5/5] Linking Aggregator...");
+  await (await queue.setAggregator(aggregatorAddress)).wait();
+  await (await verifier.setAggregator(aggregatorAddress)).wait();
+  await (await royaltyManager.setAggregator(aggregatorAddress)).wait();
+  console.log("Aggregator linked in Queue, Verifier, and RoyaltyManager.");
 
   console.log("\n=======================================================");
   console.log(" DEPLOYMENT FINISHED SUCCESSFULLY!");
   console.log(` QUEUE_ADDRESS=${queueAddress}`);
   console.log(` VERIFIER_ADDRESS=${verifierAddress}`);
+  console.log(` ROYALTY_MANAGER_ADDRESS=${royaltyManagerAddress}`);
+  console.log(` AGGREGATOR_ADDRESS=${aggregatorAddress}`);
   console.log(` CONFIG_DIGEST=${REAL_DIGEST}`);
   console.log("=======================================================\n");
 }

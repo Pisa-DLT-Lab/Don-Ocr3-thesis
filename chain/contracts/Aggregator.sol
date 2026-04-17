@@ -51,17 +51,21 @@ contract Aggregator is IAggregator {
 
     // Forwards an attribution request to the OracleQueue contract.
     // Requires the end user to pay a fee.
-    function requestAttribution(string calldata _ipfsCid) external override payable {
+    function requestAttribution(string calldata _ipfsCid) external override payable returns (uint256) {
         // Base check on the exact payment
         require(msg.value == queryFee, "Amount error: must pay the right queryFee"); 
         // Forward request to OracleQueue
-        queue.requestAttribution(_ipfsCid, msg.sender, msg.value);
+        uint256 requestId = queue.requestAttribution(_ipfsCid, msg.sender, msg.value);
+        emit LogNewCustomerRequest(requestId, _ipfsCid, msg.sender, msg.value);
+        return requestId;
     }
 
     // Forwards a request approval to the OracleQueue contract.
     // This function can only be called by the model creator.
-    function approveJob(uint256 _requestId) external override onlyOwner {
-        queue.approveJob(_requestId);
+    function approveJob(uint256 _requestId) external override onlyOwner returns (uint256) {
+        (uint256 jobId, string memory ipfsCid) = queue.approveJob(_requestId);
+        emit LogNewJobForOracles(jobId, ipfsCid);
+        return jobId;
     }
 
     // Forwards the transmission request to the OracleVerifier contract.
@@ -81,14 +85,15 @@ contract Aggregator is IAggregator {
             report,
             rs,
             ss,
-            rawVs
+            rawVs,
+            msg.sender
         );
     }
 
     // This function is called automatically by the OracleVerifier contract
     // at the end of the "transmit" function to refund the Oracle that executed the job
     // and distribute the rewards to the model creator.
-    function distributeRewards(address payable _oracle, uint256 _jobId) external override onlyVerifier {
+    function distributeRewards(address payable _oracle, uint256 _jobId, uint256 _vectorLength) external override onlyVerifier {
         // Check current balance.
         uint256 balance = address(this).balance;
         require(balance >= queryFee, "No funds");
@@ -102,6 +107,15 @@ contract Aggregator is IAggregator {
         // through the RoyaltyManager contract.
         uint256 holdersReward = queryFee - (oracleReward + modelCreatorReward); 
         manager.rewardHolders{value: holdersReward}(_jobId);
+        emit JobCompleted(_jobId, _oracle, _vectorLength, block.timestamp);
+    }
+
+    function getResult(uint256 _jobId) external override view returns (int128[] memory, address, uint256) {
+        return verifier.getResult(_jobId);
+    }
+
+    function isCompleted(uint256 _jobId) external override view returns (bool) {
+        return verifier.isCompleted(_jobId);
     }
 
     function setFilterPolicy(FilterType _filterType, uint256 _threshold) external override onlyOwner {

@@ -3,22 +3,22 @@ require("dotenv").config({ path: "../.env" });
 
 // Function to verify the first numbers of the array
 async function main() {
-  const CONTRACT_ADDR = process.env.VERIFIER_ADDRESS; 
+  const CONTRACT_ADDR = process.env.AGGREGATOR_ADDRESS;
 
   console.log(`\nVerifying Oracle Data on Chain`);
   console.log(`Target Contract: ${CONTRACT_ADDR}`);
 
   // Connection to the contract
-  const verifier = await hre.ethers.getContractAt("OracleVerifier", CONTRACT_ADDR);
+  const aggregator = await hre.ethers.getContractAt("Aggregator", CONTRACT_ADDR);
 
   try {
     // 1. Find the ID
     console.log("   -> Searching for 'JobCompleted' events...");
     
     // Create filter for the event
-    const filter = verifier.filters.JobCompleted();
+    const filter = aggregator.filters.JobCompleted();
     // Obtain the history of the events from the generation of block 0
-    const events = await verifier.queryFilter(filter);
+    const events = await aggregator.queryFilter(filter);
 
     if (events.length === 0) {
         console.log("No outcomes found on chain yet.");
@@ -39,7 +39,7 @@ async function main() {
     console.log(`\nFetching data from Storage (getResult)...`);
     
     // Returns: [flatMatrix, submitter, timestamp]
-    const result = await verifier.getResult(requestId);
+    const result = await aggregator.getResult(requestId);
     
     const flatMatrix = result[0]; // BigInt Array
     const submitter = result[1];

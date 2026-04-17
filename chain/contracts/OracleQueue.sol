@@ -71,7 +71,7 @@ contract OracleQueue is IOracleQueue {
         string calldata _ipfsCid, 
         address sender, 
         uint256 value
-    ) external override onlyAggregator {
+    ) external override onlyAggregator returns (uint256) {
         uint256 currentReqId = requestCounter;
 
         // Save the new request in the queue
@@ -84,13 +84,14 @@ contract OracleQueue is IOracleQueue {
 
         emit LogNewCustomerRequest(currentReqId, _ipfsCid, sender, value);
         requestCounter++;
+        return currentReqId;
     }
 
     // =========================================================
     // PHASE 2: MODEL CREATOR
     // =========================================================
     // The Model Creator calls this function after validating the request
-    function approveJob(uint256 _requestId) external override onlyAggregator {
+    function approveJob(uint256 _requestId) external override onlyAggregator returns (uint256, string memory) {
         // Fetch from the customer queue
         CustomerRequest storage req = customerQueue[_requestId];
         require(!req.isProcessed, "Request already approved");
@@ -110,5 +111,6 @@ contract OracleQueue is IOracleQueue {
         emit LogNewJobForOracles(currentOracleJobId, req.ipfsCid);
 
         oracleJobCounter++;
+        return (currentOracleJobId, req.ipfsCid);
     }
 }

@@ -13,21 +13,21 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	gethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	shell "github.com/ipfs/go-ipfs-api"
 )
 
-
 // startChainListener initializes the WebSocket connection to the blockchain and
-// listens for OracleQueue events. It implements a resilient reconnection loop
+// listens for Aggregator events. It implements a resilient reconnection loop
 // to ensure the oracle never misses an event even if the RPC node temporarily drops.
-func startChainListener(ctx context.Context, rpcUrl, verifierContractAddress, queueContractAddr string, ipfs *shell.Shell) {
+func startChainListener(ctx context.Context, rpcUrl, aggregatorContractAddress string, ipfs *shell.Shell) {
 	// Convert standard HTTP RPC URL to WebSocket for real-time event streaming
 	wsUrl := strings.Replace(rpcUrl, "http://", "ws://", 1)
 
-	fmt.Printf("Listener: Connecting to %s\n    -> Watching Queue: %s\n", wsUrl, queueContractAddr)
+	fmt.Printf("Listener: Connecting to %s\n    -> Watching Aggregator: %s\n", wsUrl, aggregatorContractAddress)
 
 	// Resilient reconnection loop: if runListener returns an error, wait and retry
 	for {
@@ -37,7 +37,7 @@ func startChainListener(ctx context.Context, rpcUrl, verifierContractAddress, qu
 			return
 		default:
 			// Blocking call that listens for events. Returns only on error.
-			if err := runListener(ctx, wsUrl, verifierContractAddress, queueContractAddr, ipfs); err != nil {
+			if err := runListener(ctx, wsUrl, aggregatorContractAddress, ipfs); err != nil {
 				log.Printf("Listener crashed: %v. Reconnecting in 0.5s...", err)
 				// Changed from 5 sec to 500ms because of time evaluation
 				time.Sleep(500 * time.Millisecond)
@@ -48,33 +48,26 @@ func startChainListener(ctx context.Context, rpcUrl, verifierContractAddress, qu
 
 // runListener handles ABI binding, log subscription, and event parsing.
 // It returns an error on any failure, allowing startChainListener to reconnect.
-func runListener(ctx context.Context, wsUrl, verifierContractAddress, queueContractAddr string, ipfs *shell.Shell) error {
+func runListener(ctx context.Context, wsUrl, aggregatorContractAddress string, ipfs *shell.Shell) error {
 	client, err := ethclient.Dial(wsUrl)
 	if err != nil {
 		return fmt.Errorf("Failed RPC connection: %w", err)
 	}
 	defer client.Close()
 
-	qAddr := common.HexToAddress(queueContractAddr)
-	vAddr := common.HexToAddress(verifierContractAddress)
+	aAddr := common.HexToAddress(aggregatorContractAddress)
 
-	// Bind the OracleQueue contract ABI
-	queueContract, err := contracts.NewOracleQueue(qAddr, client)
+	// Bind the Aggregator contract ABI
+	aggregatorContract, err := contracts.NewAggregator(aAddr, client)
 	if err != nil {
-		return fmt.Errorf("Failed to bind OracleQueue: %w", err)
-	}
-
-	// Bind the OracleVerifier contract ABI
-	verifierContract, err := contracts.NewOracleVerifier(vAddr, client)
-	if err != nil {
-		return fmt.Errorf("Failed to bind OracleVerifier: %w", err)
+		return fmt.Errorf("Failed to bind Aggregator: %w", err)
 	}
 
 	logs := make(chan gethtypes.Log, 100)
 
-	// Subscribe to logs from both the Queue and Verifier contracts
+	// Subscribe to logs from the Aggregator facade.
 	query := ethereum.FilterQuery{
-		Addresses: []common.Address{qAddr, vAddr},
+		Addresses: []common.Address{aAddr},
 	}
 
 	sub, err := client.SubscribeFilterLogs(ctx, query, logs)
@@ -99,17 +92,17 @@ func runListener(ctx context.Context, wsUrl, verifierContractAddress, queueContr
 			timeout.Stop()
 
 			// Attempt to parse as LogNewJobForOracles
-			newJob, err := queueContract.ParseLogNewJobForOracles(vLog)
+			newJob, err := aggregatorContract.ParseLogNewJobForOracles(vLog)
 			if err == nil {
 				// Handle the job asynchronously to avoid blocking the listener loop
-				if err := handleNewJob(ctx, newJob, ipfs); err != nil {
+				if err := handleNewJob(ctx, aggregatorContract, newJob, ipfs); err != nil {
 					log.Printf("Error handling event: %v", err)
 				}
 				continue
 			}
 
 			// Attempt to parse as JobCompleted
-			completed, err := verifierContract.ParseJobCompleted(vLog)
+			completed, err := aggregatorContract.ParseJobCompleted(vLog)
 			if err == nil {
 				jobId64 := completed.JobId.Uint64()
 				MarkJobAsProcessed(jobId64)
@@ -140,12 +133,21 @@ func runListener(ctx context.Context, wsUrl, verifierContractAddress, queueContr
 // in the shared thread-safe cache as PENDING, and delegates heavy processing
 // to a background goroutine so the listener can return immediately to the
 // WebSocket stream.
-func handleNewJob(ctx context.Context, event *contracts.OracleQueueLogNewJobForOracles, ipfs *shell.Shell) error {
+func handleNewJob(ctx context.Context, aggregatorContract *contracts.Aggregator, event *contracts.AggregatorLogNewJobForOracles, ipfs *shell.Shell) error {
 	jobId := event.JobId
 	ipfsCid := event.IpfsCid
 	jobId64 := jobId.Uint64()
 
 	fmt.Printf("\nListener: Detected Job #%s | CID: %s\n", jobId.String(), ipfsCid)
+
+	filterType, threshold, err := aggregatorContract.GetFilterPolicy(&bind.CallOpts{Context: ctx})
+	if err != nil {
+		return fmt.Errorf("failed to fetch Aggregator filter policy: %w", err)
+	}
+	filterPolicy, err := filterPolicyName(filterType)
+	if err != nil {
+		return err
+	}
 
 	// -------------------------------------------------------------------------
 	// 1. THREAD-SAFE CACHE UPDATE
@@ -168,21 +170,25 @@ func handleNewJob(ctx context.Context, event *contracts.OracleQueueLogNewJobForO
 	// Enqueue the job as PENDING. OCR3 Observation() will return empty bytes
 	// until the state transitions to Completed.
 	JobCache.enqueue(jobId64, &JobData{
-		JobID:     jobId,
-		CID:       ipfsCid,
-		State:     StatePending,
-		Processed: false,
+		JobID:           jobId,
+		CID:             ipfsCid,
+		FilterType:      filterType,
+		FilterPolicy:    filterPolicy,
+		FilterThreshold: cloneThreshold(threshold),
+		State:           StatePending,
+		Processed:       false,
 	})
 	JobCache.Unlock()
 
-	fmt.Printf("[Listener] Job #%d saved as PENDING. Starting async IPFS & AI task...\n", jobId64)
+	fmt.Printf("[Listener] Job #%d saved as PENDING with policy=%s threshold=%s. Starting async IPFS & AI task...\n",
+		jobId64, filterPolicy, threshold.String())
 
 	// -------------------------------------------------------------------------
 	// 2. ASYNC DELEGATION
 	// Spawn a goroutine for all I/O-bound and CPU-bound work (IPFS download,
 	// AI inference polling). The listener loop is not blocked.
 	// -------------------------------------------------------------------------
-	go processJobAsync(ctx, jobId64, ipfsCid, ipfs)
+	go processJobAsync(ctx, jobId64, ipfsCid, filterPolicy, ipfs)
 
 	return nil
 }
@@ -198,7 +204,7 @@ const MODEL_SERVICE_URL = "http://host.docker.internal:9090"
 //  1. Downloading the job payload from IPFS
 //  2. Submitting it to the Python AI service and polling for the result
 //  3. Committing the final result vector to the shared cache
-func processJobAsync(ctx context.Context, jobIdUint uint64, ipfsCid string, ipfs *shell.Shell) {
+func processJobAsync(ctx context.Context, jobIdUint uint64, ipfsCid string, filterPolicy string, ipfs *shell.Shell) {
 	// -------------------------------------------------------------------------
 	// PHASE 1: IPFS DOWNLOAD
 	// Fetch the raw input data associated with this job from IPFS.
@@ -231,8 +237,9 @@ func processJobAsync(ctx context.Context, jobIdUint uint64, ipfsCid string, ipfs
 
 	// Prepare the payload struct with the job details
 	reqData := AttributeRequest{
-		JobId: jobIdStr,
-		Text:  inputText,
+		JobId:        jobIdStr,
+		Text:         inputText,
+		FilterPolicy: filterPolicy,
 	}
 	// Serialize the request payload into JSON
 	jsonData, err := json.Marshal(reqData)
@@ -242,10 +249,10 @@ func processJobAsync(ctx context.Context, jobIdUint uint64, ipfsCid string, ipfs
 	}
 
 	// =========================================================================
-    // 1. ASYNCHRONOUS JOB SUBMISSION (POST)
-    // =========================================================================
+	// 1. ASYNCHRONOUS JOB SUBMISSION (POST)
+	// =========================================================================
 	// Use NewRequestWithContext to bind the HTTP request to the goroutine's lifecycle.
-    // This prevents goroutine leaks if the parent context is canceled during the request.
+	// This prevents goroutine leaks if the parent context is canceled during the request.
 	req, err := http.NewRequestWithContext(ctx, "POST", MODEL_SERVICE_URL+"/attribute", bytes.NewBuffer(jsonData))
 	if err != nil {
 		setJobError(jobIdUint, fmt.Errorf("failed to build request: %w", err))
@@ -269,23 +276,23 @@ func processJobAsync(ctx context.Context, jobIdUint uint64, ipfsCid string, ipfs
 	}
 
 	// =========================================================================
-    // 2. NON-BLOCKING POLLING LOOP (GET)
-    // =========================================================================
+	// 2. NON-BLOCKING POLLING LOOP (GET)
+	// =========================================================================
 	fmt.Printf("[Async Task] Job #%d - Waiting for AI result...\n", jobIdUint)
 
 	// Initialize a ticker to poll the endpoint every 5 seconds.
-    // Deferring Stop() ensures the timer is released from memory when the function exits.
+	// Deferring Stop() ensures the timer is released from memory when the function exits.
 	ticker := time.NewTicker(4 * time.Second) // Timer changed from 15 to 5, is based on the overall time of the att. method
 	defer ticker.Stop()
 
-	var finalResultStrings []string
+	var finalVector []*big.Int
 	statusUrl := fmt.Sprintf("%s/result/%s", MODEL_SERVICE_URL, jobIdStr)
 
 	// Infinite loop using a select statement for safe multiplexing of channels
 	for {
 		select {
 		// CASE A: The parent context signals a shutdown or timeout.
-        // We catch this to gracefully abort the polling and exit the goroutine.
+		// We catch this to gracefully abort the polling and exit the goroutine.
 		case <-ctx.Done():
 			fmt.Printf("[Async Task] Job #%d - Cancelled (shutdown).\n", jobIdUint)
 			return
@@ -315,7 +322,11 @@ func processJobAsync(ctx context.Context, jobIdUint uint64, ipfsCid string, ipfs
 			switch pyResp.Status {
 			case "completed":
 				// Target state reached: extract results and break out of the infinite loop
-				finalResultStrings = pyResp.Result
+				finalVector, err = packSortedList(pyResp.Result.SortedList)
+				if err != nil {
+					setJobError(jobIdUint, fmt.Errorf("invalid Python sorted_list result: %w", err))
+					return
+				}
 				goto donePolling
 			case "error":
 				// Fatal state reached: log the AI error and terminate the goroutine
@@ -331,20 +342,8 @@ donePolling:
 
 	// -------------------------------------------------------------------------
 	// PHASE 3: CACHE COMMIT
-	// Parse the result strings returned by Python into []*big.Int (Solidity
-	// compatible) and expose the final vector to the OCR3 consensus round.
+	// Commit the packed holder-score vector and expose it to the OCR3 consensus round.
 	// -------------------------------------------------------------------------
-	var finalVector []*big.Int
-	for _, strVal := range finalResultStrings {
-		val := new(big.Int)
-		val, success := val.SetString(strVal, 10)
-		if !success {
-			setJobError(jobIdUint, fmt.Errorf("failed to parse BigInt from string: %s", strVal))
-			return
-		}
-		finalVector = append(finalVector, val)
-	}
-
 	JobCache.Lock()
 	if job, exists := JobCache.jobs[jobIdUint]; exists {
 		job.State = StateCompleted // Mark as ready for consensus

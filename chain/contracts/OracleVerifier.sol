@@ -72,11 +72,13 @@ contract OracleVerifier is IOracleVerifier {
         bytes calldata report,
         bytes32[] calldata rs, 
         bytes32[] calldata ss, 
-        bytes32 rawVs // A single bytes32 parameter containing up to 32 packed 'v' values
+        bytes32 rawVs, // A single bytes32 parameter containing up to 32 packed 'v' values
+        address transmitter
     ) external override onlyAggregator {
         // Basic checks and Anti-Replay protection
         require(configDigest == expectedConfigDigest, "Invalid ConfigDigest");
         require(!usedSeqNr[seqNr], "Sequence Number already used (Replay Attack)");
+        require(isOracle[transmitter], "Unauthorized transmitter");
 
         // Mark the sequence number as used
         usedSeqNr[seqNr] = true;
@@ -115,15 +117,15 @@ contract OracleVerifier is IOracleVerifier {
 
         results[jobId] = Result({
             flatMatrix:     _flatMatrix,
-            submitter:      msg.sender,
+            submitter:      transmitter,
             timestamp:      block.timestamp,
             saved:          true
         });
 
-        emit JobCompleted(jobId, msg.sender, _flatMatrix.length, block.timestamp);
+        emit JobCompleted(jobId, transmitter, _flatMatrix.length, block.timestamp);
 
         // Call the Aggregator function that unlock the funds and triggers rewards.
-        aggregator.distributeRewards(payable(msg.sender), jobId);
+        aggregator.distributeRewards(payable(transmitter), jobId, _flatMatrix.length);
     }
 
     function getResult(uint256 _jobId) external override view returns (int128[] memory, address, uint256) {

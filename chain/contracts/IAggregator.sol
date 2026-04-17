@@ -6,8 +6,25 @@ interface IAggregator {
         TOP_VALUES,
         TOP_HOLDERS
     }
-    function requestAttribution(string calldata _ipfsCid) external payable;
-    function approveJob(uint256 _requestId) external;
+    event LogNewCustomerRequest(
+        uint256 indexed requestId,
+        string ipfsCid,
+        address requester,
+        uint256 payment
+    );
+    event LogNewJobForOracles(
+        uint256 indexed jobId,
+        string ipfsCid
+    );
+    event JobCompleted(
+        uint256 indexed jobId,
+        address indexed submitter,
+        uint256 vectorLength,
+        uint256 timestamp
+    );
+
+    function requestAttribution(string calldata _ipfsCid) external payable returns (uint256);
+    function approveJob(uint256 _requestId) external returns (uint256);
     function transmit(
         bytes32 configDigest,
         uint64 seqNr,
@@ -16,7 +33,9 @@ interface IAggregator {
         bytes32[] calldata ss, 
         bytes32 rawVs
     ) external;
-    function distributeRewards(address payable _oracle, uint256 _jobId) external;
+    function distributeRewards(address payable _oracle, uint256 _jobId, uint256 _vectorLength) external;
+    function getResult(uint256 _jobId) external view returns (int128[] memory, address, uint256);
+    function isCompleted(uint256 _jobId) external view returns (bool);
     function setFilterPolicy(FilterType _filterType, uint256 _threshold) external;
     function getFilterPolicy() external view returns (FilterType, uint256);
 }

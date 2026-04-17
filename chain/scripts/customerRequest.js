@@ -3,7 +3,7 @@ const hre = require("hardhat");
 /**
  * customerRequest.js
  * Simulates a customer placing a request by uploading data to IPFS
- * and submitting a payable transaction to the OracleQueue contract.
+ * and submitting a payable transaction to the Aggregator contract.
  */
 async function main() {
     console.log("[CUSTOMER] Starting request and payment workflow...");
@@ -25,17 +25,17 @@ async function main() {
     }
 
     // --- PHASE 2: BLOCKCHAIN SUBMISSION ---
-    const queueAddress = process.env.QUEUE_ADDRESS;
+    const aggregatorAddress = process.env.AGGREGATOR_ADDRESS;
     const signers = await hre.ethers.getSigners();
     const customerWallet = signers[10]; // Standard test customer index
     
-    const queueContract = (await hre.ethers.getContractAt("OracleQueue", queueAddress)).connect(customerWallet);
+    const aggregatorContract = (await hre.ethers.getContractAt("Aggregator", aggregatorAddress)).connect(customerWallet);
 
     try {
-        const payment = hre.ethers.parseEther("0.02");
+        const payment = await aggregatorContract.queryFee();
         console.log(`[CHAIN] Sending request with ${hre.ethers.formatEther(payment)} ETH payment...`);
         
-        const tx = await queueContract.requestAttribution(cid, { value: payment });
+        const tx = await aggregatorContract.requestAttribution(cid, { value: payment });
         console.log(`[CHAIN] Transaction broadcasted. Hash: ${tx.hash}`);
 
         await tx.wait();

@@ -6,7 +6,7 @@ The project proposes a novel decentralized application designed to address fair 
 
 ## Project Structure
 
-* **chain**: Contains the Solidity smart contracts (`OracleQueue.sol`, `OracleVerifier.sol`), Hardhat configuration, and deployment scripts.
+* **chain**: Contains the Solidity smart contracts (`Aggregator.sol`, `OracleQueue.sol`, `OracleVerifier.sol`), Hardhat configuration, and deployment scripts.
 * **oracle**: Contains the off-chain Oracle node backend written in Go, including the custom OCR3 (Off-Chain Reporting) plugin and listener.
 * **IpfsAgent**: Scripts and configurations for handling data storage and retrieval via IPFS.
 * **docker-compose.yml**: Static Docker Compose setup for the oracle network and testing environment.
@@ -177,7 +177,7 @@ cd chain
 npx hardhat run scripts/modelCreatorApprove.js --network localhost
 ```
 
-This script simulates the model creator listening for OracleQueue request events. Wait for it to be deployed and he starts listen to the events.
+This script simulates the model creator listening for Aggregator request events. Wait for it to be deployed and then start listening to the events.
 
 ---
 
@@ -203,7 +203,7 @@ At this point:
 - Royalties are calculated
 
 You can monitor everything in the main Docker terminal.
-And to check the current result saved on-chain (in OracleVerifier), you can use the script verify.js to check the first ten numbers of the vector.
+To check the current result through the Aggregator facade, use `verify.js` to inspect the first ten numbers of the vector.
 
 ---
 

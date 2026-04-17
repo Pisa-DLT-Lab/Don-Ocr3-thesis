@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"os"
 	"fmt"
 	"math/big"
+	"os"
 	"sort"
 	"time"
 
@@ -16,30 +16,29 @@ import (
 // =============================================================================
 // REPORTING PLUGIN (OCR3 Application Logic)
 // =============================================================================
-type attributionPluginFactory struct {}
+type attributionPluginFactory struct{}
 
 // NewReportingPlugin is invoked by libocr during node bootstrap.
-// It initializes the plugin with the protocol limits and injects the 
+// It initializes the plugin with the protocol limits and injects the
 // custom dependencies required for the attribution process.
 func (f attributionPluginFactory) NewReportingPlugin(_ context.Context, cfg ocr3types.ReportingPluginConfig) (ocr3types.ReportingPlugin[struct{}], ocr3types.ReportingPluginInfo, error) {
 	return &attributionPlugin{
-		cfg:      cfg,
-	}, ocr3types.ReportingPluginInfo{
-		Name: "attribution-matrix-median",
-		Limits: ocr3types.ReportingPluginLimits{
-			MaxQueryLength:       10 * 1024,
-			MaxObservationLength: 256 * 1024, // 256KB limit
-			MaxOutcomeLength:     256 * 1024,
-			MaxReportLength:      256 * 1024,
-			MaxReportCount:       1,
-		},
-	}, nil
+			cfg: cfg,
+		}, ocr3types.ReportingPluginInfo{
+			Name: "attribution-matrix-median",
+			Limits: ocr3types.ReportingPluginLimits{
+				MaxQueryLength:       10 * 1024,
+				MaxObservationLength: 256 * 1024, // 256KB limit
+				MaxOutcomeLength:     256 * 1024,
+				MaxReportLength:      256 * 1024,
+				MaxReportCount:       1,
+			},
+		}, nil
 }
 
 type attributionPlugin struct {
-	cfg      ocr3types.ReportingPluginConfig
+	cfg ocr3types.ReportingPluginConfig
 }
-
 
 // =============================================================================
 // PHASE 1: QUERY (Leader proposes work)
@@ -49,46 +48,47 @@ type attributionPlugin struct {
 // It inspects the local thread-safe cache to identify pending or completed jobs.
 // The FIFO queue ensures fair scheduling and prevents head-of-line blocking.
 func (p *attributionPlugin) Query(ctx context.Context, _ ocr3types.OutcomeContext) (ocrtypes.Query, error) {
-    start := time.Now()
-    defer func() {
-        fmt.Printf("[METRIC-OCR] Phase: QUERY | Leader Node | Time: %v\n", time.Since(start))
-    }()
+	start := time.Now()
+	defer func() {
+		fmt.Printf("[METRIC-OCR] Phase: QUERY | Leader Node | Time: %v\n", time.Since(start))
+	}()
 
 	// Enforce mutual exclusion while managing the FIFO queue state
 	JobCache.Lock()
-    defer JobCache.Unlock()
+	defer JobCache.Unlock()
 
 	// Iteratively process the queue to flush out stale or failed jobs
 	for len(JobCache.queue) > 0 {
-        headID := JobCache.queue[0]
-        job, exists := JobCache.jobs[headID]
+		headID := JobCache.queue[0]
+		job, exists := JobCache.jobs[headID]
 
-        if !exists || job.Processed {
-            // Job already finalized or missing. Dequeue and proceed
-            JobCache.queue = JobCache.queue[1:]
-            continue
-        }
+		if !exists || job.Processed {
+			// Job already finalized or missing. Dequeue and proceed
+			JobCache.queue = JobCache.queue[1:]
+			continue
+		}
 
-		// Fault Tolerance: If the asynchronous worker encounters a fatal error, 
-        // the job is dequeued to prevent consensus stalling.
-        if job.State == StateFailed {
-            fmt.Printf("[WARN] Job #%s failed permanently. Removing from queue.\n", job.JobID)
-            job.Processed = true // Lo marchiamo processato per non vederlo più
-            JobCache.queue = JobCache.queue[1:]
-            continue
-        }
+		// Fault Tolerance: If the asynchronous worker encounters a fatal error,
+		// the job is dequeued to prevent consensus stalling.
+		if job.State == StateFailed {
+			fmt.Printf("[WARN] Job #%s failed permanently. Removing from queue.\n", job.JobID)
+			job.Processed = true // Lo marchiamo processato per non vederlo più
+			JobCache.queue = JobCache.queue[1:]
+			continue
+		}
 
-		// Active job found. Pack the RequestID and IPFS CID into an ABI-encoded query.
-        query, err := QueryArgs.Pack(job.JobID, job.CID)
+		// Active job found. Pack the RequestID, IPFS CID, and filter snapshot into an ABI-encoded query.
+		query, err := QueryArgs.Pack(job.JobID, job.CID, job.FilterType, cloneThreshold(job.FilterThreshold))
 		if err != nil {
-        return nil, fmt.Errorf("Query Pack failed: %w", err)
-    	}
+			return nil, fmt.Errorf("Query Pack failed: %w", err)
+		}
 
-        fmt.Printf("QUERY (Leader): Proposing Job #%s (CID: %s)\n", job.JobID, job.CID)
-        return query, err
-    }
+		fmt.Printf("QUERY (Leader): Proposing Job #%s (CID: %s, policy=%s, threshold=%s)\n",
+			job.JobID, job.CID, job.FilterPolicy, job.FilterThreshold.String())
+		return query, err
+	}
 
-    return nil, nil  // Empty queue
+	return nil, nil // Empty queue
 }
 
 // =============================================================================
@@ -101,15 +101,19 @@ func (p *attributionPlugin) Query(ctx context.Context, _ ocr3types.OutcomeContex
 func (p *attributionPlugin) Observation(ctx context.Context, _ ocr3types.OutcomeContext, query ocrtypes.Query) (ocrtypes.Observation, error) {
 	start := time.Now()
 	defer func() {
-        fmt.Printf("[METRIC-OCR] Phase: OBSERVATION | Node: %d | Time: %v\n", p.cfg.OracleID, time.Since(start))
-    }()
+		fmt.Printf("[METRIC-OCR] Phase: OBSERVATION | Node: %d | Time: %v\n", p.cfg.OracleID, time.Since(start))
+	}()
 
 	// If the leader proposed an empty query, return empty observation
-	if len(query) == 0 { return ocrtypes.Observation("{}"), nil }
-	
+	if len(query) == 0 {
+		return ocrtypes.Observation("{}"), nil
+	}
+
 	qVals, err := QueryArgs.Unpack(query)
-	if err != nil { return ocrtypes.Observation("{}"), nil }
-	
+	if err != nil {
+		return ocrtypes.Observation("{}"), nil
+	}
+
 	reqID := qVals[0].(*big.Int)
 	jobId64 := reqID.Uint64()
 
@@ -126,7 +130,7 @@ func (p *attributionPlugin) Observation(ctx context.Context, _ ocr3types.Outcome
 	JobCache.RUnlock()
 
 	// Case 1: Asynchronous AI computation is in progress.
-    // Returning an empty array prevents triggering libocr's MaxDurationObservation timeouts.
+	// Returning an empty array prevents triggering libocr's MaxDurationObservation timeouts.
 	if state == StatePending {
 		return ocrtypes.Observation("{}"), nil
 	}
@@ -138,43 +142,43 @@ func (p *attributionPlugin) Observation(ctx context.Context, _ ocr3types.Outcome
 	}
 
 	// Case 3: Byzantine Fault Tolerance (BFT) Attack Simulation.
-    // Alters the generated attribution vector to test the resilience of the Outcome phase.
+	// Alters the generated attribution vector to test the resilience of the Outcome phase.
 	maliciousMode := os.Getenv("MALICIOUS_MODE")
 
 	if maliciousMode == "alter" {
 		fmt.Printf("[ALERT] Oracle=%d: MALICIOUS MODE ACTIVE. Altering vector by +5%%.\n", p.cfg.OracleID)
-        
-        // Create a fake vector with the same length of the original
-        fakeVector := make([]*big.Int, len(result))
-        
-        for i, originalVal := range result {
-            fakeVal := new(big.Int).Set(originalVal) 
-            
-			// Introduce a +5% deviation: (val * 105) / 100
-            fakeVal.Mul(fakeVal, big.NewInt(105))
-            fakeVal.Div(fakeVal, big.NewInt(100))
-            
-            fakeVector[i] = fakeVal
-        }
-		fmt.Printf("OBSERVATION Malicious Oracle=%d: Generated Vector len=%d. First: %s\n", p.cfg.OracleID, len(fakeVector), fakeVector[0].String())    
-        
-        packedObs, err := ObservationArgs.Pack(fakeVector)
-        if err != nil { return nil, err }
-        return ocrtypes.Observation(packedObs), nil
+
+		// Introduce a +5% deviation on scores while preserving holder IDs.
+		fakeVector, err := alterPackedScoresByPercent(result, 105, 100)
+		if err != nil {
+			return ocrtypes.Observation("{}"), nil
+		}
+		fmt.Printf("OBSERVATION Malicious Oracle=%d: Generated Vector len=%d. First: %s\n", p.cfg.OracleID, len(fakeVector), fakeVector[0].String())
+
+		packedObs, err := ObservationArgs.Pack(fakeVector)
+		if err != nil {
+			return nil, err
+		}
+		return ocrtypes.Observation(packedObs), nil
 	}
 
 	// Malicious node (timeout) or timeout/break of node
 	if maliciousMode == "timeout" {
 		fmt.Printf("[ALERT] Oracle=%d: MALICIOUS MODE (TIMEOUT) ACTIVE. Simulating crash/offline status.\n", p.cfg.OracleID)
 		// simulates a node that takes infinite time to respond
-		time.Sleep(1*time.Hour)
+		time.Sleep(1 * time.Hour)
 	}
 
-	// Case 4: Honest Execution. 
-    // Pack the ABI-encoded true attribution vector into the observation.
-	fmt.Printf("OBSERVATION Oracle=%d: Generated Vector len=%d. First: %s\n", p.cfg.OracleID, len(result), result[0].String())    
+	// Case 4: Honest Execution.
+	// Pack the ABI-encoded true attribution vector into the observation.
+	if len(result) == 0 {
+		return ocrtypes.Observation("{}"), nil
+	}
+	fmt.Printf("OBSERVATION Oracle=%d: Generated Vector len=%d. First: %s\n", p.cfg.OracleID, len(result), result[0].String())
 	packedObs, err := ObservationArgs.Pack(result)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	return ocrtypes.Observation(packedObs), nil
 }
@@ -182,8 +186,9 @@ func (p *attributionPlugin) Observation(ctx context.Context, _ ocr3types.Outcome
 // ValidateObservation is called on every received observation to reject malformed
 // data early.
 // Returning nil here means "accept everything".
-func (p *attributionPlugin) ValidateObservation(context.Context, ocr3types.OutcomeContext, ocrtypes.Query, ocrtypes.AttributedObservation) error { return nil }
-
+func (p *attributionPlugin) ValidateObservation(context.Context, ocr3types.OutcomeContext, ocrtypes.Query, ocrtypes.AttributedObservation) error {
+	return nil
+}
 
 // =============================================================================
 // PHASE 3: CONSENSUS & OUTCOME (Leader aggregates data)
@@ -198,40 +203,50 @@ func (p *attributionPlugin) ObservationQuorum(_ context.Context, _ ocr3types.Out
 }
 
 // Outcome acts as the final consensus gatekeeper.
-// It deterministically aggregates observations using a median calculation 
+// It deterministically aggregates observations using a median calculation
 // to nullify the impact of Byzantine (malicious) vectors.
 func (p *attributionPlugin) Outcome(ctx context.Context, _ ocr3types.OutcomeContext, query ocrtypes.Query, attrObservation []ocrtypes.AttributedObservation) (ocr3types.Outcome, error) {
 	start := time.Now()
 	defer func() {
-        fmt.Printf("[METRIC-OCR] Phase: OUTCOME (Median Calc) | Leader Node | Time: %v\n", time.Since(start))
-    }()
+		fmt.Printf("[METRIC-OCR] Phase: OUTCOME (Median Calc) | Leader Node | Time: %v\n", time.Since(start))
+	}()
 
-	if len(query) == 0 { 
-		return ocr3types.Outcome([]byte{}), nil 
+	if len(query) == 0 {
+		return ocr3types.Outcome([]byte{}), nil
 	}
 
 	// Important if we have two identical vectors (very unprobable)
 	sort.Slice(attrObservation, func(i, j int) bool {
 		return attrObservation[i].Observer < attrObservation[j].Observer
 	})
-	
+
 	// Unpack Query to get the ID
 	qVals, err := QueryArgs.Unpack(query)
-	if err != nil { return ocr3types.Outcome([]byte{}), nil }
+	if err != nil {
+		return ocr3types.Outcome([]byte{}), nil
+	}
 	reqID := qVals[0].(*big.Int)
+	filterType := qVals[2].(uint8)
+	threshold := qVals[3].(*big.Int)
 
 	// Decode and store all the received vectors
 	// by casting as ObservationArgs the elements of aos (array of observations)
 	var candidates [][]*big.Int
 
 	for _, ao := range attrObservation {
-        // Unpack Observation ABI
+		// Unpack Observation ABI
 		vals, err := ObservationArgs.Unpack(ao.Observation)
-		if err != nil { continue }
-        
-        // Extract the vector (index 0)
+		if err != nil {
+			continue
+		}
+
+		// Extract the vector (index 0)
 		vector := vals[0].([]*big.Int)
 		if len(vector) > 0 {
+			if _, err := unpackHolderScores(vector); err != nil {
+				fmt.Printf("WARN: Ignoring malformed observation: %v\n", err)
+				continue
+			}
 			candidates = append(candidates, vector)
 		}
 	}
@@ -242,47 +257,30 @@ func (p *attributionPlugin) Outcome(ctx context.Context, _ ocr3types.OutcomeCont
 		return ocr3types.Outcome([]byte{}), nil
 	}
 
-	// ==================================================================
-	// DETERMINISTIC MEDIAN COMPUTATION
-	// ==================================================================
-
-	// 1. Take the length of the first vector as reference
-	vectorLen := len(candidates[0])
-	winner := make([]*big.Int, vectorLen)
-
-	// 2. For every position in the vector
-	for i := 0; i < vectorLen; i++ {
-		var valuesAtPosition []*big.Int
-
-		// Take all the values for that position
-		for _, vec := range candidates {
-			// Security check: if an oracle send a vector less long, ignore it for this index
-			if len(vec) > i {
-				valuesAtPosition = append(valuesAtPosition, vec[i])
-			}
-		}
-		// 3. Order the values from the smallest to the biggest (useful for the median)
-		sort.Slice(valuesAtPosition, func(a, b int) bool {
-			return valuesAtPosition[a].Cmp(valuesAtPosition[b]) < 0
-		})
-
-		// 4. Take the central value
-		medianIndex := len(valuesAtPosition)/2
-
-		// Assign this value to the winner
-		if len(valuesAtPosition) > 0 {
-			winner[i] = valuesAtPosition[medianIndex]
-		} else {
-			// Fallback if the list is empty (must not happen)
-			winner[i] = big.NewInt(0)
-		}
+	medianPoints, err := medianHolderScores(candidates)
+	if err != nil {
+		fmt.Printf("WARN: Median computation failed: %v\n", err)
+		return ocr3types.Outcome([]byte{}), nil
+	}
+	selectedPoints, err := selectTopHolderScores(medianPoints, filterType, threshold)
+	if err != nil {
+		fmt.Printf("WARN: Filter selection failed: %v\n", err)
+		return ocr3types.Outcome([]byte{}), nil
+	}
+	winner, err := packHolderScores(selectedPoints)
+	if err != nil {
+		fmt.Printf("WARN: Outcome packing failed: %v\n", err)
+		return ocr3types.Outcome([]byte{}), nil
 	}
 
-	fmt.Printf("OUTCOME (Leader): Selected Vector len %d\n", len(winner))
+	fmt.Printf("OUTCOME (Leader): Median holders=%d selected=%d policy=%d threshold=%s\n",
+		len(medianPoints), len(winner), filterType, threshold.String())
 
-    // PACK ABI OUTCOME
+	// PACK ABI OUTCOME
 	packedOutcome, err := OutcomeArgs.Pack(reqID, winner)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return ocr3types.Outcome(packedOutcome), nil
 }
 
@@ -299,28 +297,36 @@ func (p *attributionPlugin) Reports(_ context.Context, _ uint64, outcome ocr3typ
 // onchain signatures to be considered "attested" (typically f+1 signers).
 //
 // Returning true means "this report is acceptable for potential transmission".
-func (p *attributionPlugin) ShouldAcceptAttestedReport(context.Context, uint64, ocr3types.ReportWithInfo[struct{}]) (bool, error) { return true, nil }
+func (p *attributionPlugin) ShouldAcceptAttestedReport(context.Context, uint64, ocr3types.ReportWithInfo[struct{}]) (bool, error) {
+	return true, nil
+}
 
 // ShouldTransmitAcceptedReport is called right before transmission.
 // Returning true means "actually transmit now (subject to the schedule)".
 func (p *attributionPlugin) ShouldTransmitAcceptedReport(ctx context.Context, seqNr uint64, r ocr3types.ReportWithInfo[struct{}]) (bool, error) {
-	// Start stopwatch 
+	// Start stopwatch
 	// One of the last phases before the transmission to the blockchain, useful to measure it
 	start := time.Now()
-    defer func() {
-        fmt.Printf("[METRIC-OCR] Phase: TRANSMIT_CHECK | Node: %d | Time: %v\n", p.cfg.OracleID, time.Since(start))
-    }()
-	
-	// Baseline size verification for the ABI payload
-	if len(r.Report) < 32 { return false, nil }
+	defer func() {
+		fmt.Printf("[METRIC-OCR] Phase: TRANSMIT_CHECK | Node: %d | Time: %v\n", p.cfg.OracleID, time.Since(start))
+	}()
 
-    // Unpack report
+	// Baseline size verification for the ABI payload
+	if len(r.Report) < 32 {
+		return false, nil
+	}
+
+	// Unpack report
 	values, err := OutcomeArgs.Unpack(r.Report)
-	if err != nil { return false, nil }
-	
+	if err != nil {
+		return false, nil
+	}
+
 	// Sanity check on the associated Request ID
-    requestID := values[0].(*big.Int)
-	if requestID == nil { return false, nil }
+	requestID := values[0].(*big.Int)
+	if requestID == nil {
+		return false, nil
+	}
 
 	return true, nil
 }

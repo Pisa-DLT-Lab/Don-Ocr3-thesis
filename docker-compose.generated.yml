@@ -18,9 +18,7 @@ x-generated-oracle-keys: &generated-oracle-keys
 x-oracle-common-env: &oracle-common-env
   <<: *generated-oracle-keys
   CHAIN_RPC: "${CHAIN_RPC_URL}"
-  VERIFIER_ADDRESS: "${VERIFIER_ADDRESS}"
-  QUEUE_ADDRESS: "${QUEUE_ADDRESS}"
-  QUEUE_CONTRACT_ADDRESS: "${QUEUE_ADDRESS}"
+  AGGREGATOR_ADDRESS: "${AGGREGATOR_ADDRESS}"
   IPFS_API_URL: "${DOCKER_IPFS_URL}"
   MALICIOUS_MODE: "false"
   NUM_ORACLES: "7"

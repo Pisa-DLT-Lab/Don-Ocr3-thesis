@@ -9,9 +9,9 @@ interface IOracleVerifier {
         bytes calldata report,
         bytes32[] calldata rs, 
         bytes32[] calldata ss, 
-        bytes32 rawVs
+        bytes32 rawVs,
+        address transmitter
     ) external;
     function getResult(uint256 _jobId) external view returns (int128[] memory, address, uint256);
     function isCompleted(uint256 _jobId) external view returns (bool);
 }
-
