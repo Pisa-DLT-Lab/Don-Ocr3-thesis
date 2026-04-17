@@ -149,7 +149,7 @@ def compute_attribution(job_id, input_file, output_file, method):
     else:
         raise ValueError(f"Unknown attribution method: {method}")
 
-def process_attribution_scores(raw_data, filter_policy, threshold):
+def process_attribution_scores(raw_data, filter_policy):
     # Process raw attribution scores: aggregate if needed, then normalize
     if raw_data.ndim == 2:
         normalized_scores = softmax(np.mean(raw_data, axis=1)).tolist()
@@ -164,25 +164,24 @@ def process_attribution_scores(raw_data, filter_policy, threshold):
 
     # Apply filtering policy.
     combined = list(zip(HOLDERS, normalized_scores))
-    top_results = None
+    results = None
     if filter_policy == "TOP_VALUES":
-        # Sort points by score and take top K points.
-        sorted_list = sorted(combined, key=lambda item: item[1], reverse=True)
-        top_results = sorted_list[:threshold]
+        # For TOP_VALUES, we keep all individual scores without aggregation.
+        results = combined
     elif filter_policy == "TOP_HOLDERS":
-        # Group by holder and sum scores, then take top K holders.
-        res = dict()
+        # For TOP_HOLDERS, we group by holder and sum holders' scores.
+        count_dict = dict()
         for holder, score in combined:
-            if holder in res:
-                res[holder] += score
+            if holder in count_dict:
+                count_dict[holder] += score
             else:
-                res[holder] = score
-        top_results = sorted(res.items(), key=lambda item: item[1], reverse=True)[:threshold]
+                count_dict[holder] = score
+        results = list(count_dict.items())
 
     # Results should be sorted by holder id in ascending order.
-    top_results = sorted(top_results, key=lambda item: item[0], reverse=False)
+    results = sorted(results, key=lambda item: item[0], reverse=False)
     # And then unpacked into separate lists.
-    holder_ids, scores = zip(*top_results)
+    holder_ids, scores = zip(*results)
     # Convert scores to BigInts for blockchain compatibility.
     int_scores = []
     for s in scores:
