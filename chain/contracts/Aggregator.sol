@@ -56,15 +56,13 @@ contract Aggregator is IAggregator {
         require(msg.value == queryFee, "Amount error: must pay the right queryFee"); 
         // Forward request to OracleQueue
         uint256 requestId = queue.requestAttribution(_ipfsCid, msg.sender, msg.value);
-        emit LogNewCustomerRequest(requestId, _ipfsCid, msg.sender, msg.value);
         return requestId;
     }
 
     // Forwards a request approval to the OracleQueue contract.
     // This function can only be called by the model creator.
     function approveJob(uint256 _requestId) external override onlyOwner returns (uint256) {
-        (uint256 jobId, string memory ipfsCid) = queue.approveJob(_requestId);
-        emit LogNewJobForOracles(jobId, ipfsCid);
+        (uint256 jobId, ) = queue.approveJob(_requestId);
         return jobId;
     }
 
@@ -90,10 +88,20 @@ contract Aggregator is IAggregator {
         );
     }
 
+    // Returns the result of a completed job by querying the OracleVerifier contract.
+    function getResult(uint256 _jobId) external override view returns (int128[] memory, address, uint256) {
+        return verifier.getResult(_jobId);
+    }
+
+    // Checks if the job is completed by querying the OracleVerifier contract.
+    function isCompleted(uint256 _jobId) external override view returns (bool) {
+        return verifier.isCompleted(_jobId);
+    }
+
     // This function is called automatically by the OracleVerifier contract
     // at the end of the "transmit" function to refund the Oracle that executed the job
     // and distribute the rewards to the model creator.
-    function distributeRewards(address payable _oracle, uint256 _jobId, uint256 _vectorLength) external override onlyVerifier {
+    function distributeRewards(address payable _oracle, uint256 _jobId) external override onlyVerifier {
         // Check current balance.
         uint256 balance = address(this).balance;
         require(balance >= queryFee, "No funds");
@@ -107,22 +115,15 @@ contract Aggregator is IAggregator {
         // through the RoyaltyManager contract.
         uint256 holdersReward = queryFee - (oracleReward + modelCreatorReward); 
         manager.rewardHolders{value: holdersReward}(_jobId);
-        emit JobCompleted(_jobId, _oracle, _vectorLength, block.timestamp);
     }
 
-    function getResult(uint256 _jobId) external override view returns (int128[] memory, address, uint256) {
-        return verifier.getResult(_jobId);
-    }
-
-    function isCompleted(uint256 _jobId) external override view returns (bool) {
-        return verifier.isCompleted(_jobId);
-    }
-
+    // Allows the model creator to set the filter policy for reward distribution.
     function setFilterPolicy(FilterType _filterType, uint256 _threshold) external override onlyOwner {
         filterType = _filterType;
         filterThreshold = _threshold;
     }
 
+    // Returns the current filter policy for reward distribution.
     function getFilterPolicy() external override view returns (FilterType, uint256) {
         return (filterType, filterThreshold);
     }

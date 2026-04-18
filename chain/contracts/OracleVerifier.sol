@@ -125,7 +125,7 @@ contract OracleVerifier is IOracleVerifier {
         emit JobCompleted(jobId, transmitter, _flatMatrix.length, block.timestamp);
 
         // Call the Aggregator function that unlock the funds and triggers rewards.
-        aggregator.distributeRewards(payable(transmitter), jobId, _flatMatrix.length);
+        aggregator.distributeRewards(payable(transmitter), jobId);
     }
 
     function getResult(uint256 _jobId) external override view returns (int128[] memory, address, uint256) {
