@@ -4,6 +4,10 @@ const REQUEST_FEE = hre.ethers.parseEther("0.01"); // Fee paid by the customer
 const ORACLE_REWARD = hre.ethers.parseEther("0.003"); // Reward to refund the oracle
 const MODEL_CREATOR_REWARD = hre.ethers.parseEther("0.002"); // Reward for the model creator
 const NUM_HOLDERS = 1000; // Number of data holders to simulate in the RoyaltyManager.
+const FILTER_POLICIES = {
+    TOP_VALUES: 0,
+    TOP_HOLDERS: 1,
+};
 
 // Generates a random Ethereum address (for testing purposes only).
 function randomAddress() {
@@ -39,6 +43,82 @@ function resolveConfigDigest(numOracles) {
 
     // Safety fallback for custom configurations when no generated digest is supplied.
     return "0x0000000000000000000000000000000000000000000000000000000000000000";
+}
+
+function resolveFilterPolicy() {
+    const rawPolicy = (process.env.FILTER_POLICY || "TOP_HOLDERS").trim().toUpperCase();
+    if (rawPolicy === "0") {
+        return { name: "TOP_VALUES", value: FILTER_POLICIES.TOP_VALUES };
+    }
+    if (rawPolicy === "1") {
+        return { name: "TOP_HOLDERS", value: FILTER_POLICIES.TOP_HOLDERS };
+    }
+    if (Object.prototype.hasOwnProperty.call(FILTER_POLICIES, rawPolicy)) {
+        return { name: rawPolicy, value: FILTER_POLICIES[rawPolicy] };
+    }
+    throw new Error(`Invalid FILTER_POLICY: ${process.env.FILTER_POLICY}. Use TOP_HOLDERS or TOP_VALUES.`);
+}
+
+function resolveFilterThreshold() {
+    const rawThreshold = (process.env.FILTER_THRESHOLD || "100").trim();
+    if (!/^[0-9]+$/.test(rawThreshold)) {
+        throw new Error(`Invalid FILTER_THRESHOLD: ${rawThreshold}. Use a non-negative integer.`);
+    }
+    return BigInt(rawThreshold);
+}
+
+async function assertAggregatorWiring(aggregator, expectedQueue, expectedVerifier, expectedManager) {
+    const deployedQueue = await aggregator.queue();
+    const deployedVerifier = await aggregator.verifier();
+    const deployedManager = await aggregator.manager();
+
+    console.log("Aggregator.queue():", deployedQueue);
+    console.log("Aggregator.verifier():", deployedVerifier);
+    console.log("Aggregator.manager():", deployedManager);
+
+    if (deployedQueue.toLowerCase() !== expectedQueue.toLowerCase()) {
+        throw new Error(`Aggregator.queue mismatch: expected ${expectedQueue}, got ${deployedQueue}`);
+    }
+    if (deployedVerifier.toLowerCase() !== expectedVerifier.toLowerCase()) {
+        throw new Error(`Aggregator.verifier mismatch: expected ${expectedVerifier}, got ${deployedVerifier}`);
+    }
+    if (deployedManager.toLowerCase() !== expectedManager.toLowerCase()) {
+        throw new Error(`Aggregator.manager mismatch: expected ${expectedManager}, got ${deployedManager}`);
+    }
+}
+
+async function assertFilterPolicy(aggregator, expectedPolicy, expectedThreshold) {
+    const [actualPolicy, actualThreshold] = await aggregator.getFilterPolicy();
+    const actualPolicyNumber = Number(actualPolicy);
+
+    console.log("Aggregator.getFilterPolicy():", actualPolicyNumber, actualThreshold.toString());
+
+    if (actualPolicyNumber !== expectedPolicy.value) {
+        throw new Error(`Aggregator filter policy mismatch: expected ${expectedPolicy.value}, got ${actualPolicyNumber}`);
+    }
+    if (actualThreshold.toString() !== expectedThreshold.toString()) {
+        throw new Error(`Aggregator filter threshold mismatch: expected ${expectedThreshold.toString()}, got ${actualThreshold.toString()}`);
+    }
+}
+
+async function assertChildAggregatorLinks(queue, verifier, royaltyManager, expectedAggregator) {
+    const queueAggregator = await queue.aggregator();
+    const verifierAggregator = await verifier.aggregator();
+    const royaltyManagerAggregator = await royaltyManager.aggregator();
+
+    console.log("OracleQueue.aggregator():", queueAggregator);
+    console.log("OracleVerifier.aggregator():", verifierAggregator);
+    console.log("RoyaltyManager.aggregator():", royaltyManagerAggregator);
+
+    if (queueAggregator.toLowerCase() !== expectedAggregator.toLowerCase()) {
+        throw new Error(`OracleQueue aggregator mismatch: expected ${expectedAggregator}, got ${queueAggregator}`);
+    }
+    if (verifierAggregator.toLowerCase() !== expectedAggregator.toLowerCase()) {
+        throw new Error(`OracleVerifier aggregator mismatch: expected ${expectedAggregator}, got ${verifierAggregator}`);
+    }
+    if (royaltyManagerAggregator.toLowerCase() !== expectedAggregator.toLowerCase()) {
+        throw new Error(`RoyaltyManager aggregator mismatch: expected ${expectedAggregator}, got ${royaltyManagerAggregator}`);
+    }
 }
 
 
@@ -124,6 +204,7 @@ async function main() {
     const aggregatorAddress = await xaggregator.getAddress();
     console.log("Aggregator deployed to:", aggregatorAddress);
     console.log("Gas used:", aggregatorReceipt.gasUsed.toString());
+    await assertAggregatorWiring(xaggregator, queueAddress, verifierAddress, royaltyManagerAddress);
 
     console.log("\n");
 
@@ -145,6 +226,17 @@ async function main() {
     const receipt3 = await tx3.wait();
     console.log("Transaction hash:", tx3.hash);
     console.log("Gas used:", receipt3.gasUsed.toString());
+    await assertChildAggregatorLinks(queue, verifier, royaltyManager, aggregatorAddress);
+
+    console.log("Setting Aggregator filter policy...");
+    const filterPolicy = resolveFilterPolicy();
+    const filterThreshold = resolveFilterThreshold();
+    const tx4 = await xaggregator.setFilterPolicy(filterPolicy.value, filterThreshold);
+    const receipt4 = await tx4.wait();
+    console.log(`Filter policy: ${filterPolicy.name}, threshold: ${filterThreshold.toString()}`);
+    console.log("Transaction hash:", tx4.hash);
+    console.log("Gas used:", receipt4.gasUsed.toString());
+    await assertFilterPolicy(xaggregator, filterPolicy, filterThreshold);
 
 
     console.log("\n=======================================================");
@@ -153,6 +245,8 @@ async function main() {
     console.log(` VERIFIER_ADDRESS=${verifierAddress}`);
     console.log(` ROYALTY_MANAGER_ADDRESS=${royaltyManagerAddress}`);
     console.log(` AGGREGATOR_ADDRESS=${aggregatorAddress}`);
+    console.log(` FILTER_POLICY=${filterPolicy.name}`);
+    console.log(` FILTER_THRESHOLD=${filterThreshold.toString()}`);
     console.log("=======================================================\n");
 }
 

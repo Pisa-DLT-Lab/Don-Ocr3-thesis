@@ -1,5 +1,17 @@
 {
   "entries": {
+    "2196a952681bcb5ad5b19ca13c90aac6c4d1a27156dd90014cad34accd5cda5d": {
+      "config_digest": "0x00019993762936b47169aed484186706ccff0ae15fe43f31741d66ad16b4a8ac",
+      "digest_source_sha256": "014d1a5472aab014deb1b48910b42a38b76b0ffc0602916772c378bfa550bab7",
+      "fault_tolerance": 1,
+      "key_seed": "42",
+      "network_seed": 42,
+      "num_oracles": 4,
+      "ocr_seed": 1,
+      "oracle_private_keys_sha256": "d15327966201c3ef32d44101ca3e6211d28c961c42ab75170918a4e35c953808",
+      "source": "auto",
+      "version": 1
+    },
     "7f8415de6babc7f26f39bfe84756701ba4621adde29c58757756e0167237cda0": {
       "config_digest": "0x0001de4e7b0f5f1f8d1ed9551586374820cde9aca7aae609171c83ee3783463d",
       "digest_source_sha256": "014d1a5472aab014deb1b48910b42a38b76b0ffc0602916772c378bfa550bab7",

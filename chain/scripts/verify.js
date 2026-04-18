@@ -8,17 +8,19 @@ async function main() {
   console.log(`\nVerifying Oracle Data on Chain`);
   console.log(`Target Contract: ${CONTRACT_ADDR}`);
 
-  // Connection to the contract
+  // Connection to the contracts. Aggregator is the root address; Verifier stores results.
   const aggregator = await hre.ethers.getContractAt("Aggregator", CONTRACT_ADDR);
+  const verifierAddress = await aggregator.verifier();
+  const verifier = await hre.ethers.getContractAt("OracleVerifier", verifierAddress);
 
   try {
     // 1. Find the ID
     console.log("   -> Searching for 'JobCompleted' events...");
     
     // Create filter for the event
-    const filter = aggregator.filters.JobCompleted();
+    const filter = verifier.filters.JobCompleted();
     // Obtain the history of the events from the generation of block 0
-    const events = await aggregator.queryFilter(filter);
+    const events = await verifier.queryFilter(filter);
 
     if (events.length === 0) {
         console.log("No outcomes found on chain yet.");
@@ -39,7 +41,7 @@ async function main() {
     console.log(`\nFetching data from Storage (getResult)...`);
     
     // Returns: [flatMatrix, submitter, timestamp]
-    const result = await aggregator.getResult(requestId);
+    const result = await verifier.getResult(requestId);
     
     const flatMatrix = result[0]; // BigInt Array
     const submitter = result[1];

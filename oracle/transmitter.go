@@ -10,10 +10,8 @@ import (
 	"time"
 
 	"OCR3-thesis/contracts"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -33,7 +31,6 @@ type ethTransmitter struct {
 	rpcClient  *rpc.Client
 	ethClient  *ethclient.Client
 	aggregator *contracts.Aggregator
-	parsedABI  abi.ABI
 	privateKey *ecdsa.PrivateKey
 	address    common.Address
 }
@@ -50,7 +47,7 @@ func NewEthTransmitter(id, n int, rpcUrl, privKeyHex string, addr common.Address
 	pubKey := privKey.Public().(*ecdsa.PublicKey)
 	address := crypto.PubkeyToAddress(*pubKey)
 
-	// 2. Persistent RPC connetions, initialized here
+	// 2. Persistent RPC connections, initialized here
 	rpcClient, err := rpc.Dial(rpcUrl)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial raw RPC: %w", err)
@@ -67,10 +64,6 @@ func NewEthTransmitter(id, n int, rpcUrl, privKeyHex string, addr common.Address
 		return nil, fmt.Errorf("failed to bind contract: %w", err)
 	}
 
-	// Pre-parsing the ABI for the view function to save CPU cycles during execution
-	const isCompletedABI = `[{"inputs":[{"internalType":"uint256","name":"_jobId","type":"uint256"}],"name":"isCompleted","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"}]`
-	parsedABI, _ := abi.JSON(strings.NewReader(isCompletedABI))
-
 	return &ethTransmitter{
 		oracleID:     id,
 		nOracles:     n,
@@ -79,7 +72,6 @@ func NewEthTransmitter(id, n int, rpcUrl, privKeyHex string, addr common.Address
 		rpcClient:    rpcClient,
 		ethClient:    ethClient,
 		aggregator:   aggregator,
-		parsedABI:    parsedABI,
 		privateKey:   privKey,
 		address:      address,
 	}, nil
@@ -143,35 +135,18 @@ func (t *ethTransmitter) Transmit(
 	// 3. ON-CHAIN VIEW CHECK
 	// Synchronous double-check directly against the blockchain state.
 	// =========================================================================
-	inputData, err := t.parsedABI.Pack("isCompleted", requestID)
+	startRPC := time.Now()
+	isDone, err := readAggregatorIsCompletedNoFrom(ctx, t.rpcClient, t.contractAddr, requestID)
+	rpcDuration := time.Since(startRPC)
 	if err == nil {
-		callMsg := map[string]string{
-			"to":   t.contractAddr.Hex(),
-			"data": hexutil.Encode(inputData),
+		fmt.Printf("[METRIC-OCR] Phase: VERIFIER_VIEW_CALL | Oracle: %d | Time: %v\n", t.oracleID, rpcDuration)
+		if isDone {
+			fmt.Printf("[Oracle %d] Job #%s already completed on-chain. Skipping transmission.\n", t.oracleID, requestID)
+			MarkJobAsProcessed(jobId64)
+			return nil
 		}
-
-		var resultHex string
-		startRPC := time.Now()
-		err = t.rpcClient.CallContext(ctx, &resultHex, "eth_call", callMsg, "latest")
-		rpcDuration := time.Since(startRPC)
-
-		if err == nil {
-			fmt.Printf("[METRIC-OCR] Phase: RPC_VIEW_CALL | Oracle: %d | Time: %v\n", t.oracleID, rpcDuration)
-
-			resultBytes, decodeErr := hexutil.Decode(resultHex)
-			if decodeErr == nil {
-				var isDone bool
-				t.parsedABI.UnpackIntoInterface(&isDone, "isCompleted", resultBytes)
-
-				if isDone {
-					fmt.Printf("[Oracle %d] Job #%s already completed on-chain. Skipping transmission.\n", t.oracleID, requestID)
-					MarkJobAsProcessed(jobId64)
-					return nil
-				}
-			}
-		} else {
-			fmt.Printf("[Oracle %d] View check failed: %v.\n", t.oracleID, err)
-		}
+	} else {
+		fmt.Printf("[Oracle %d] Verifier view check failed: %v.\n", t.oracleID, err)
 	}
 
 	// =========================================================================

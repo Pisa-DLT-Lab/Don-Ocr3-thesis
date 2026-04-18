@@ -20,8 +20,8 @@ FROM alpine:latest
 
 WORKDIR /root/
 
-# Install iproute2 to use tc command
-RUN apk add --no-cache iproute2
+# Install iproute2 to use tc command and curl to wait for deployed contracts.
+RUN apk add --no-cache iproute2 curl
 
 COPY --from=builder /out/oracle /usr/local/bin/oracle
 

@@ -16,8 +16,8 @@ from dattri.benchmark.datasets.shakespeare_char.data import CustomDataset
 from dattri.benchmark.models.nanoGPT.model import GPT, GPTConfig
 from dattri.task import AttributionTask
 
-APP_PORT = 53000
-APP_HOST = "localhost"
+APP_PORT = int(os.getenv("MODEL_SERVER_PORT", "9090"))
+APP_HOST = os.getenv("MODEL_SERVER_HOST", "0.0.0.0")
 TEMP_DIR = "./tmp_jobs"
 TRAIN_DATASET_HOLDERS_PATH = "./nanoGPT/data/shakespeare_char/holders.txt"
 TRAIN_DATASET_PATH = "./nanoGPT/data/shakespeare_char/train.bin"
@@ -217,7 +217,7 @@ def run_full_process(job_id, prompt, filter_policy, threshold):
         # D. Read and Aggregate results
         print(f"[JOB {job_id}] Step 3: Reading and aggregating attribution results...")
         raw_data = np.loadtxt(output_filename)
-        holder_ids, scores = process_attribution_scores(raw_data, filter_policy, threshold)
+        holder_ids, scores = process_attribution_scores(raw_data, filter_policy)
 
         # E. Save Result
         with jobs_lock:
