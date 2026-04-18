@@ -1,6 +1,6 @@
-
 require("@nomicfoundation/hardhat-ethers");
 require("dotenv").config({path: "../.env"})
+require("hardhat-gas-reporter");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -15,5 +15,12 @@ module.exports = {
     docker: {
       url: process.env.CHAIN_RPC_URL || "http://chain:8545",    
     }
+  },
+  gasReporter: {
+    enabled: true,
+    currency: "USD",
+    showTimeSpent: true,
+    showMethodSig: true,
+    trackGasDeltas: true
   },
 };
