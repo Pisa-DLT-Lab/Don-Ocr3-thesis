@@ -83,8 +83,7 @@ contract Aggregator is IAggregator {
             report,
             rs,
             ss,
-            rawVs,
-            msg.sender
+            rawVs
         );
     }
 
