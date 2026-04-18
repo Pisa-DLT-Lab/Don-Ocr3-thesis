@@ -67,4 +67,10 @@ contract RoyaltyManager {
         balances[msg.sender] = 0;
     }
 
+    // Allows the owner to register new data holders to the contract.
+    function registerHolder(address _holder) external onlyOwner {
+        require(_holder != address(0), "Invalid address");
+        holders.push(_holder);
+    }
+
 }
