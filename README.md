@@ -70,6 +70,8 @@ To test the full system, follow this chronological sequence.
 
 The oracles communicate with the Python AI server hosted on the remote machine (`satoshi`).
 
+### Option A: Use the remote server
+
 ### 1. Access the remote server via SSH tunnel
 
 ```bash
@@ -82,6 +84,44 @@ ssh -L 9090:127.0.0.1:50100 tomelliniT@131.114.50.205
 
 ```bash
 python model_service_v2.py
+```
+
+### Option B: Run the local model service
+
+You can also run the attribution service locally. From the repository root:
+
+```bash
+cd model
+python3 -m venv .venv
+source .venv/bin/activate
+pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm web3 Flask
+```
+
+The local service expects the Shakespeare checkpoint at:
+
+```bash
+model/nanoGPT/out-shakespeare-char/ckpt.pt
+```
+
+If the checkpoint is stored elsewhere, create the expected directory and link it:
+
+```bash
+mkdir -p nanoGPT/out-shakespeare-char
+ln -s /absolute/path/to/ckpt.pt nanoGPT/out-shakespeare-char/ckpt.pt
+```
+
+Then start the service:
+
+```bash
+python3 model_server_service.py
+```
+
+By default, `model_server_service.py` listens on `0.0.0.0:9090`, which is the address expected by the oracle containers through `host.docker.internal:9090`.
+
+You can override the host or port if needed:
+
+```bash
+MODEL_SERVER_HOST=0.0.0.0 MODEL_SERVER_PORT=9090 python3 model_server_service.py
 ```
 
 
@@ -129,6 +169,15 @@ If digest computation still needs more time:
 scripts/run_generated_stack.sh 7 123 --digest-timeout-seconds 3600
 ```
 
+The on-chain Aggregator filter policy is configured from `.env` during deployment:
+
+```bash
+FILTER_POLICY=TOP_HOLDERS
+FILTER_THRESHOLD=100
+```
+
+`FILTER_POLICY` accepts `TOP_HOLDERS` or `TOP_VALUES`. If it is not set, deployment defaults to `TOP_HOLDERS`.
+
 ### What happens under the hood
 
 - `scripts/generate_compose.py` generates a Compose stack for the requested number of oracles
@@ -136,6 +185,8 @@ scripts/run_generated_stack.sh 7 123 --digest-timeout-seconds 3600
 - A generated Hardhat config funds those oracle accounts
 - The OCR config digest is computed and cached
 - `chain/scripts/deployContracts.js` deploys contracts using the selected digest from `CONFIG_DIGEST`
+- `chain/scripts/deployContracts.js` sets the Aggregator filter policy from `.env`
+- The oracle containers read `AGGREGATOR_ADDRESS` from `.env`; Queue, Verifier, and filter policy are discovered from Aggregator on-chain
 - `oracle/setup_network_parametric.sh` assigns deterministic pseudo-random locations and applies `tc netem` latency by default
 - Docker Compose builds and starts the chain, IPFS, bootstrap, and oracle containers
 

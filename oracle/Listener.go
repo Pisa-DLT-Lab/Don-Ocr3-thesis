@@ -13,21 +13,23 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	gethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	shell "github.com/ipfs/go-ipfs-api"
 )
 
 // startChainListener initializes the WebSocket connection to the blockchain and
-// listens for Aggregator events. It implements a resilient reconnection loop
+// discovers OracleQueue and OracleVerifier through Aggregator, then listens for
+// their events. Aggregator is also used for reading the filter policy snapshot.
+// It implements a resilient reconnection loop
 // to ensure the oracle never misses an event even if the RPC node temporarily drops.
 func startChainListener(ctx context.Context, rpcUrl, aggregatorContractAddress string, ipfs *shell.Shell) {
 	// Convert standard HTTP RPC URL to WebSocket for real-time event streaming
 	wsUrl := strings.Replace(rpcUrl, "http://", "ws://", 1)
 
-	fmt.Printf("Listener: Connecting to %s\n    -> Watching Aggregator: %s\n", wsUrl, aggregatorContractAddress)
+	fmt.Printf("Listener: Connecting to %s\n    -> Aggregator root: %s\n", wsUrl, aggregatorContractAddress)
 
 	// Resilient reconnection loop: if runListener returns an error, wait and retry
 	for {
@@ -37,7 +39,7 @@ func startChainListener(ctx context.Context, rpcUrl, aggregatorContractAddress s
 			return
 		default:
 			// Blocking call that listens for events. Returns only on error.
-			if err := runListener(ctx, wsUrl, aggregatorContractAddress, ipfs); err != nil {
+			if err := runListener(ctx, rpcUrl, wsUrl, aggregatorContractAddress, ipfs); err != nil {
 				log.Printf("Listener crashed: %v. Reconnecting in 0.5s...", err)
 				// Changed from 5 sec to 500ms because of time evaluation
 				time.Sleep(500 * time.Millisecond)
@@ -48,35 +50,53 @@ func startChainListener(ctx context.Context, rpcUrl, aggregatorContractAddress s
 
 // runListener handles ABI binding, log subscription, and event parsing.
 // It returns an error on any failure, allowing startChainListener to reconnect.
-func runListener(ctx context.Context, wsUrl, aggregatorContractAddress string, ipfs *shell.Shell) error {
-	client, err := ethclient.Dial(wsUrl)
+func runListener(ctx context.Context, rpcUrl, wsUrl, aggregatorContractAddress string, ipfs *shell.Shell) error {
+	wsClient, err := ethclient.Dial(wsUrl)
 	if err != nil {
-		return fmt.Errorf("Failed RPC connection: %w", err)
+		return fmt.Errorf("Failed websocket RPC connection: %w", err)
 	}
-	defer client.Close()
+	defer wsClient.Close()
+
+	rpcClient, err := rpc.Dial(rpcUrl)
+	if err != nil {
+		return fmt.Errorf("Failed HTTP RPC connection: %w", err)
+	}
+	defer rpcClient.Close()
 
 	aAddr := common.HexToAddress(aggregatorContractAddress)
 
-	// Bind the Aggregator contract ABI
-	aggregatorContract, err := contracts.NewAggregator(aAddr, client)
+	qAddr, err := readAggregatorAddressNoFrom(ctx, rpcClient, aAddr, "queue")
 	if err != nil {
-		return fmt.Errorf("Failed to bind Aggregator: %w", err)
+		return fmt.Errorf("Failed to read Aggregator.queue: %w", err)
+	}
+	vAddr, err := readAggregatorAddressNoFrom(ctx, rpcClient, aAddr, "verifier")
+	if err != nil {
+		return fmt.Errorf("Failed to read Aggregator.verifier: %w", err)
+	}
+
+	queueContract, err := contracts.NewOracleQueue(qAddr, wsClient)
+	if err != nil {
+		return fmt.Errorf("Failed to bind OracleQueue: %w", err)
+	}
+	verifierContract, err := contracts.NewOracleVerifier(vAddr, wsClient)
+	if err != nil {
+		return fmt.Errorf("Failed to bind OracleVerifier: %w", err)
 	}
 
 	logs := make(chan gethtypes.Log, 100)
 
-	// Subscribe to logs from the Aggregator facade.
+	// The fixed contracts emit job events from Queue and completion events from Verifier.
 	query := ethereum.FilterQuery{
-		Addresses: []common.Address{aAddr},
+		Addresses: []common.Address{qAddr, vAddr},
 	}
 
-	sub, err := client.SubscribeFilterLogs(ctx, query, logs)
+	sub, err := wsClient.SubscribeFilterLogs(ctx, query, logs)
 	if err != nil {
 		return fmt.Errorf("Failed to subscribe: %w", err)
 	}
 	defer sub.Unsubscribe()
 
-	fmt.Println("Listener: Listening for LogNewJobForOracles events...")
+	fmt.Printf("Listener: Watching Queue %s and Verifier %s\n", qAddr.Hex(), vAddr.Hex())
 
 	for {
 		// Inactivity timer: force reconnect if no events are received within the window.
@@ -91,18 +111,18 @@ func runListener(ctx context.Context, wsUrl, aggregatorContractAddress string, i
 		case vLog := <-logs:
 			timeout.Stop()
 
-			// Attempt to parse as LogNewJobForOracles
-			newJob, err := aggregatorContract.ParseLogNewJobForOracles(vLog)
+			// Attempt to parse as Queue.LogNewJobForOracles
+			newJob, err := queueContract.ParseLogNewJobForOracles(vLog)
 			if err == nil {
 				// Handle the job asynchronously to avoid blocking the listener loop
-				if err := handleNewJob(ctx, aggregatorContract, newJob, ipfs); err != nil {
+				if err := handleNewJob(ctx, rpcClient, aAddr, newJob, ipfs); err != nil {
 					log.Printf("Error handling event: %v", err)
 				}
 				continue
 			}
 
-			// Attempt to parse as JobCompleted
-			completed, err := aggregatorContract.ParseJobCompleted(vLog)
+			// Attempt to parse as Verifier.JobCompleted
+			completed, err := verifierContract.ParseJobCompleted(vLog)
 			if err == nil {
 				jobId64 := completed.JobId.Uint64()
 				MarkJobAsProcessed(jobId64)
@@ -133,14 +153,14 @@ func runListener(ctx context.Context, wsUrl, aggregatorContractAddress string, i
 // in the shared thread-safe cache as PENDING, and delegates heavy processing
 // to a background goroutine so the listener can return immediately to the
 // WebSocket stream.
-func handleNewJob(ctx context.Context, aggregatorContract *contracts.Aggregator, event *contracts.AggregatorLogNewJobForOracles, ipfs *shell.Shell) error {
+func handleNewJob(ctx context.Context, rpcClient *rpc.Client, aggregatorAddress common.Address, event *contracts.OracleQueueLogNewJobForOracles, ipfs *shell.Shell) error {
 	jobId := event.JobId
 	ipfsCid := event.IpfsCid
 	jobId64 := jobId.Uint64()
 
 	fmt.Printf("\nListener: Detected Job #%s | CID: %s\n", jobId.String(), ipfsCid)
 
-	filterType, threshold, err := aggregatorContract.GetFilterPolicy(&bind.CallOpts{Context: ctx})
+	filterType, threshold, err := readAggregatorFilterPolicyNoFrom(ctx, rpcClient, aggregatorAddress)
 	if err != nil {
 		return fmt.Errorf("failed to fetch Aggregator filter policy: %w", err)
 	}

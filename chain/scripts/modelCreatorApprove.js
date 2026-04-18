@@ -3,7 +3,7 @@ const { ethers } = hre;
 
 /**
  * ModelCreatorApprove.js
- * Acts as the 'Model Creator' authority. It monitors the Aggregator for new
+ * Acts as the 'Model Creator' authority. It monitors OracleQueue for new
  * customer requests and formally approves them to trigger the DON consensus.
  */
 async function main() {
@@ -13,10 +13,13 @@ async function main() {
 
   const [creatorWallet] = await hre.ethers.getSigners();
 
-  // Attach to the Aggregator using the Creator's identity
   const aggregatorContract = (await hre.ethers.getContractAt("Aggregator", aggregatorAddress)).connect(creatorWallet);
+  const queueAddress = await aggregatorContract.queue();
+  const verifierAddress = await aggregatorContract.verifier();
+  const queueContract = await hre.ethers.getContractAt("OracleQueue", queueAddress);
+  const verifierContract = await hre.ethers.getContractAt("OracleVerifier", verifierAddress);
 
-  console.log(`[MODEL CREATOR] Monitoring 'LogNewCustomerRequest' events...`);
+  console.log(`[MODEL CREATOR] Monitoring Queue 'LogNewCustomerRequest' events...`);
 
   const MAX_RETRIES = 3;
   
@@ -24,7 +27,7 @@ async function main() {
   // to prevent nonce collisions and maintain deterministic benchmark results.
   let jobProcessingPipeline = Promise.resolve();
 
-  aggregatorContract.on("LogNewCustomerRequest", async (requestId, ipfsCid, customer, payment) => {
+  queueContract.on("LogNewCustomerRequest", async (requestId, ipfsCid, customer, payment) => {
     console.log(`\n[EVENT] New Job Detected: #${requestId}`);
     console.log(`       CID:      ${ipfsCid}`);
     console.log(`       Value:    ${ethers.formatEther(payment)} ETH`);
@@ -41,7 +44,7 @@ async function main() {
           let oracleJobId = requestId;
           for (const log of receipt.logs) {
             try {
-              const parsed = aggregatorContract.interface.parseLog(log);
+              const parsed = queueContract.interface.parseLog(log);
               if (parsed.name === "LogNewJobForOracles") {
                 oracleJobId = parsed.args[0];
                 break;
@@ -66,20 +69,20 @@ async function main() {
       await new Promise((resolve, reject) => {
         let completionListener;
         const timeout = setTimeout(() => {
-          aggregatorContract.off("JobCompleted", completionListener);
+          verifierContract.off("JobCompleted", completionListener);
           reject(new Error("OCR fulfillment timeout (10m)"));
         }, 600000);
 
         completionListener = (completedId, submitter) => {
           if (completedId.toString() === requestId.toString()) {
             clearTimeout(timeout);
-            aggregatorContract.off("JobCompleted", completionListener);
+            verifierContract.off("JobCompleted", completionListener);
             console.log(`[DONE] Job #${requestId} finalized by Oracle: ${submitter}.`);
             resolve();
           }
         };
 
-        aggregatorContract.on("JobCompleted", completionListener);
+        verifierContract.on("JobCompleted", completionListener);
       });
     });
   });

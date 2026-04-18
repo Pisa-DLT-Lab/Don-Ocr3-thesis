@@ -2,115 +2,89 @@
   {
     "inputs": [
       {
-        "internalType": "uint256",
-        "name": "_queryFee",
-        "type": "uint256"
+        "internalType": "address[]",
+        "name": "_oracles",
+        "type": "address[]"
       },
       {
-        "internalType": "uint256",
-        "name": "_oracleReward",
-        "type": "uint256"
+        "internalType": "uint8",
+        "name": "_f",
+        "type": "uint8"
       },
       {
-        "internalType": "uint256",
-        "name": "_modelCreatorReward",
-        "type": "uint256"
-      },
-      {
-        "internalType": "address",
-        "name": "_verifierAddress",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_queueAddress",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_managerAddress",
-        "type": "address"
+        "internalType": "bytes32",
+        "name": "_configDigest",
+        "type": "bytes32"
       }
     ],
     "stateMutability": "nonpayable",
     "type": "constructor"
   },
   {
+    "anonymous": false,
     "inputs": [
       {
+        "indexed": true,
         "internalType": "uint256",
-        "name": "_requestId",
+        "name": "jobId",
         "type": "uint256"
-      }
-    ],
-    "name": "approveJob",
-    "outputs": [
+      },
       {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address payable",
-        "name": "_oracle",
+        "indexed": true,
+        "internalType": "address",
+        "name": "submitter",
         "type": "address"
       },
       {
+        "indexed": false,
         "internalType": "uint256",
-        "name": "_jobId",
+        "name": "vectorLength",
         "type": "uint256"
-      }
-    ],
-    "name": "distributeRewards",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "filterThreshold",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "filterType",
-    "outputs": [
-      {
-        "internalType": "enum IAggregator.FilterType",
-        "name": "",
-        "type": "uint8"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getFilterPolicy",
-    "outputs": [
-      {
-        "internalType": "enum IAggregator.FilterType",
-        "name": "",
-        "type": "uint8"
       },
       {
+        "indexed": false,
         "internalType": "uint256",
-        "name": "",
+        "name": "timestamp",
         "type": "uint256"
+      }
+    ],
+    "name": "JobCompleted",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "aggregator",
+    "outputs": [
+      {
+        "internalType": "contract IAggregator",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "expectedConfigDigest",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "f",
+    "outputs": [
+      {
+        "internalType": "uint8",
+        "name": "",
+        "type": "uint8"
       }
     ],
     "stateMutability": "view",
@@ -165,39 +139,19 @@
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "manager",
-    "outputs": [
+    "inputs": [
       {
-        "internalType": "contract IRoyaltyManager",
+        "internalType": "address",
         "name": "",
         "type": "address"
       }
     ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "modelCreatorReward",
+    "name": "isOracle",
     "outputs": [
       {
-        "internalType": "uint256",
+        "internalType": "bool",
         "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "oracleReward",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
+        "type": "bool"
       }
     ],
     "stateMutability": "view",
@@ -217,64 +171,43 @@
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "queryFee",
-    "outputs": [
+    "inputs": [
       {
         "internalType": "uint256",
         "name": "",
         "type": "uint256"
       }
     ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "queue",
+    "name": "results",
     "outputs": [
       {
-        "internalType": "contract IOracleQueue",
-        "name": "",
+        "internalType": "address",
+        "name": "submitter",
         "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "_ipfsCid",
-        "type": "string"
-      }
-    ],
-    "name": "requestAttribution",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "enum IAggregator.FilterType",
-        "name": "_filterType",
-        "type": "uint8"
       },
       {
         "internalType": "uint256",
-        "name": "_threshold",
+        "name": "timestamp",
         "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "saved",
+        "type": "bool"
       }
     ],
-    "name": "setFilterPolicy",
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_aggregatorAddress",
+        "type": "address"
+      }
+    ],
+    "name": "setAggregator",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -318,13 +251,19 @@
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "verifier",
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "name": "usedSeqNr",
     "outputs": [
       {
-        "internalType": "contract IOracleVerifier",
+        "internalType": "bool",
         "name": "",
-        "type": "address"
+        "type": "bool"
       }
     ],
     "stateMutability": "view",

@@ -106,7 +106,8 @@ func runOracle(ctx context.Context, id, n, f int, seed int64, bootAddr, listen, 
 	// Strip the "0x" prefix if present to standardize the hex format
 	privKeyHex = strings.TrimPrefix(privKeyHex, "0x")
 
-	// Retrieval of the Aggregator smart contract address from .env
+	// Retrieval of the Aggregator smart contract address from .env.
+	// Queue and Verifier are discovered from Aggregator on-chain.
 	aggregatorAddressHex := os.Getenv("AGGREGATOR_ADDRESS")
 	ipfsUrl := getEnvironment("IPFS_API_URL", "http://ipfs:5001")
 

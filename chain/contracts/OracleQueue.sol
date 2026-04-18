@@ -107,7 +107,7 @@ contract OracleQueue is IOracleQueue {
             ipfsCid: req.ipfsCid
         });
 
-        // Emit the event that wakes up the Oracles network
+        // Emit the event that wakes up the Oracle network
         emit LogNewJobForOracles(currentOracleJobId, req.ipfsCid);
 
         oracleJobCounter++;

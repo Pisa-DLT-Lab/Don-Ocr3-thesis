@@ -18,6 +18,11 @@ contract RoyaltyManager {
         _;
     }
 
+    modifier onlyAggregator() {
+        require(msg.sender == address(aggregator), "Only Aggregator allowed");
+        _;
+    }
+
     constructor(address[] memory _holders, address _verifierAddress) {
         require(_holders.length > 0, "No holders provided");
         holders = _holders;
@@ -32,7 +37,7 @@ contract RoyaltyManager {
     }
 
     // Distributes rewards to data holders based on the job result.
-    function rewardHolders(uint256 _jobId) external payable {
+    function rewardHolders(uint256 _jobId) external payable onlyAggregator {
         require(msg.value > 0, "No funds available for distribution");
         // Fetch job result to determine holders' shares.
         (int128[] memory data, , ) = verifier.getResult(_jobId);

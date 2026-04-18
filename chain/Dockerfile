@@ -16,6 +16,8 @@ EXPOSE 8545
 RUN apk add --no-cache curl
 
 RUN echo '#!/bin/sh' > /start.sh && \
+    echo 'echo "--- COMPILING CONTRACTS ---"' >> /start.sh && \
+    echo 'npx hardhat compile --force' >> /start.sh && \
     echo 'echo "--- STARTING HARDHAT NODE ---"' >> /start.sh && \
     echo 'npx hardhat node --hostname 0.0.0.0 | grep -v "eth_" &' >> /start.sh && \
     echo 'echo "--- WAITING FOR CHAIN ---"' >> /start.sh && \

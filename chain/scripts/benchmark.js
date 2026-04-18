@@ -22,6 +22,10 @@ async function main() {
     const customerWallet = signers[10];
 
     const aggregatorContract = await hre.ethers.getContractAt("Aggregator", aggregatorAddress, customerWallet);
+    const queueAddress = await aggregatorContract.queue();
+    const verifierAddress = await aggregatorContract.verifier();
+    const queueContract = await hre.ethers.getContractAt("OracleQueue", queueAddress);
+    const verifierContract = await hre.ethers.getContractAt("OracleVerifier", verifierAddress);
 
     // Initialize CSV Telemetry Data
     const csvFile = "benchmark_results.csv";
@@ -53,7 +57,7 @@ async function main() {
         const approvalPromise = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("Timeout: LogNewJobForOracles event missed")), 45000);
             
-            aggregatorContract.once("LogNewJobForOracles", (jobId) => {
+            queueContract.once("LogNewJobForOracles", (jobId) => {
                 clearTimeout(timeout);
                 resolve(jobId);
             });
@@ -71,7 +75,7 @@ async function main() {
         let currentJobId = null;
         for (const log of receipt.logs) {
             try {
-                const parsed = aggregatorContract.interface.parseLog(log);
+                const parsed = queueContract.interface.parseLog(log);
                 if (parsed.name === "LogNewCustomerRequest") {
                     currentJobId = parsed.args[0];
                     break;
@@ -102,12 +106,12 @@ async function main() {
                 if (approvedJobId !== null && jobId.toString() === approvedJobId.toString()) {
                     clearTimeout(timeout);
                     winnerAddress = submitter;
-                    aggregatorContract.off("JobCompleted", fulfillmentListener);
+                    verifierContract.off("JobCompleted", fulfillmentListener);
                     resolve();
                 }
             };
 
-            aggregatorContract.on("JobCompleted", fulfillmentListener);
+            verifierContract.on("JobCompleted", fulfillmentListener);
         });
 
         const tPhase3 = performance.now();
