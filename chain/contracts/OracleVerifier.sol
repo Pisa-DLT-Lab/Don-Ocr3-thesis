@@ -73,18 +73,13 @@ contract OracleVerifier is IOracleVerifier {
         bytes32[] calldata rs, 
         bytes32[] calldata ss, 
         bytes32 rawVs // A single bytes32 parameter containing up to 32 packed 'v' values
-        bytes32 rawVs // A single bytes32 parameter containing up to 32 packed 'v' values
     ) external override onlyAggregator {
-        // We use tx.origin to identify the original sender of the transaction.
-        address transmitter = tx.origin; 
-
         // We use tx.origin to identify the original sender of the transaction.
         address transmitter = tx.origin;
 
         // Basic checks and Anti-Replay protection
         require(configDigest == expectedConfigDigest, "Invalid ConfigDigest");
         require(!usedSeqNr[seqNr], "Sequence Number already used (Replay Attack)");
-        // Check if the transmitter is an authorized oracle.
         // Check if the transmitter is an authorized oracle.
         require(isOracle[transmitter], "Unauthorized transmitter");
 
