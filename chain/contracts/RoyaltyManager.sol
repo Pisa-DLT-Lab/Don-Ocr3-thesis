@@ -30,6 +30,7 @@ contract RoyaltyManager {
         owner = msg.sender;
     }
 
+    // Set the Aggregator contract address (can only be set by the owner).  
     function setAggregator(address _aggregatorAddress) external onlyOwner {
         require(_aggregatorAddress != address(0), "Invalid address");
         // Connect the interface to the specified address.

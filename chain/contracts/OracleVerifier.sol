@@ -5,9 +5,10 @@ import "./IAggregator.sol";
 import "./IOracleVerifier.sol";
 
 contract OracleVerifier is IOracleVerifier {
-    address public owner;
-    IAggregator public aggregator;
+    address public owner; // Owner address.
+    IAggregator public aggregator; // Reference to the Aggregator contract.
 
+    // Struct to store the result of a job.
     struct Result {
         int128[] flatMatrix;
         address  submitter;
@@ -15,13 +16,16 @@ contract OracleVerifier is IOracleVerifier {
         bool     saved;
     }
 
+    // Mappings to store job results and track used sequence numbers for replay protection.
     mapping(uint256 => Result) public results;
     mapping(uint64  => bool)   public usedSeqNr; // To avoid replay attacks
 
+    // Mapping to track authorized oracles.
     mapping(address => bool) public isOracle;
     uint8 public f; // Maximum number of faulty nodes.
     bytes32 public expectedConfigDigest; 
 
+    // Emitted when a job is completed and its result is stored.
     event JobCompleted(uint256 indexed jobId, address indexed submitter, uint256 vectorLength, uint256 timestamp);
 
     modifier onlyOwner() {
@@ -128,7 +132,6 @@ contract OracleVerifier is IOracleVerifier {
         emit JobCompleted(jobId, transmitter, _flatMatrix.length, block.timestamp);
 
         // Call the Aggregator function that unlock the funds and triggers rewards.
-        aggregator.distributeRewards(payable(transmitter), jobId);
         aggregator.distributeRewards(payable(transmitter), jobId);
     }
 

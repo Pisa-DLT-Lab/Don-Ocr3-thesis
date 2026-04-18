@@ -11,9 +11,9 @@ contract Aggregator is IAggregator {
     uint256 public queryFee; // Fee paid by end user for a request.
     uint256 public oracleReward; // Reward for the oracle that executes the job.
     uint256 public modelCreatorReward; // Reward for model creator.
-    IOracleVerifier public verifier;
-    IOracleQueue public queue;
-    IRoyaltyManager public manager;
+    IOracleVerifier public verifier; // Reference to the OracleVerifier contract.
+    IOracleQueue public queue; // Reference to the OracleQueue contract.
+    IRoyaltyManager public manager; // Reference to the RoyaltyManager contract.
     FilterType public filterType; // Type of filter to apply on the data scores for reward distribution.
     uint256 public filterThreshold; // Threshold value for filtering (e.g., number of top values/holders).
 
