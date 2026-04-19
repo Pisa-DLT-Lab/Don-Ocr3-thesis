@@ -1,13 +1,15 @@
 // This test measures the gas used for calling the functions of the Aggregator contract.
 
 const { ethers } = require("hardhat");
+
+const NUM_ORACLES = 31;
+const NUM_FAULTY = 10;
+const NUM_HOLDERS = 1000;
+const REPORT_SIZE = 1000;
 const REQUEST_FEE = ethers.parseEther("0.01"); // Fee paid by the customer
 const ORACLE_REWARD = ethers.parseEther("0.003"); // Reward to refund the oracle
 const MODEL_CREATOR_REWARD = ethers.parseEther("0.002"); // Reward for the model creator
-const NUM_ORACLES = 4;
-const NUM_FAULTY = 1;
 const CONFIG_DIGEST = "0x0001eb5bd089a1e47f2e7bf9d2332c5b1d9717a4268f5441b3a61d2db8c05475";
-const NUM_HOLDERS = 100;
 const IPFS_EXAMPLE_CID = "bafybeigrf2dwtpjkiovnigysyto3d55opf6qkdikx6d65onrqnfzwgdkfa"
 
 // Generates an array of random Ethereum addresses of the specified size.
@@ -17,6 +19,32 @@ function generateAddressArray(size) {
         array.push(ethers.Wallet.createRandom().address);
     }
     return array;
+}
+
+// Packs an array of byte values into a Solidity bytes32 value.
+function packBytesToBytes32(values) {
+    if (values.length > 32) {
+        throw new Error("Too many values (max 32)");
+    }
+    let packed = 0n;
+    for (let i = 0; i < values.length; i++) {
+        if (values[i] < 0 || values[i] > 255) {
+            throw new Error("Each value must be a byte (0-255)");
+        }
+        const shift = 8n * BigInt(31 - i);
+        packed |= BigInt(values[i]) << shift;
+    }
+    return ethers.toBeHex(packed, 32); // returns bytes32
+}
+
+// Derive a full Wallet (with private key access) from a Hardhat signer index.
+function getDerivedWallet(index, mnemonic) {
+    const phrase = mnemonic || "test test test test test test test test test test test junk";
+    return ethers.HDNodeWallet.fromPhrase(
+        phrase,
+        undefined,
+        `m/44'/60'/0'/0/${index}`
+    );
 }
 
 describe("Aggregator Test", function () {
@@ -29,11 +57,13 @@ describe("Aggregator Test", function () {
     let oracleAddresses = [];
     const holderAddresses = generateAddressArray(NUM_HOLDERS);
     let requestId;
-
+    let wallets;
+    
     before(async () => {
         signers = await ethers.getSigners();
         modelCreatorAddress = signers[0].address;
         for (let i = 1; i <= NUM_ORACLES; i++) {
+            //console.log(signers[i]);
             oracleAddresses.push(signers[i].address);
         }
     });
@@ -121,5 +151,31 @@ describe("Aggregator Test", function () {
         console.log(`Approved job with ID: ${requestId.toString()} with gas used: ${approveJobReceipt.gasUsed.toString()}`);
     });
 
-    
+    it("Call transmit", async function () {
+        const signer = signers[1]; 
+        const contractAsSigner = aggregatorContract.connect(signer);
+        const seqNr = 1; // example sequence number
+        const jobId = 0; // example job ID
+        const vector = new Array(REPORT_SIZE).fill(0); // example result vector
+        vector[0] = 1;
+        const reportData = ethers.solidityPacked(["uint256", "int128[]"], [jobId, vector]);
+        const hash = ethers.solidityPackedKeccak256(["bytes32", "uint64", "bytes"], [CONFIG_DIGEST, seqNr, reportData]);
+        let rs = [];
+        let ss = [];
+        let vs = [];
+        for (let i = 1; i <= NUM_ORACLES; i++) {
+            const wallet = getDerivedWallet(i);
+            const signature = wallet.signingKey.sign(ethers.getBytes(hash));
+            const sig = ethers.Signature.from(signature);
+            rs.push(ethers.zeroPadValue(sig.r, 32));
+            ss.push(ethers.zeroPadValue(sig.s, 32));
+            vs.push(sig.v);
+            //const recovered = ethers.recoverAddress(hash, {r: sig.r, s: sig.s, v: sig.v});
+            //console.log(sig.v, signers[i].address, recovered);
+        }
+        const rawVs = packBytesToBytes32(vs);
+        const transmitTx = await contractAsSigner.transmit(CONFIG_DIGEST, seqNr, reportData, rs, ss, rawVs);
+        const transmitReceipt = await transmitTx.wait();
+        console.log(`Transmitted report for job ID: ${jobId} with gas used: ${transmitReceipt.gasUsed.toString()}`);
+    });
 });

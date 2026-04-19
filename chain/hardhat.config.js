@@ -8,7 +8,10 @@ module.exports = {
   networks: {
     hardhat: {
       chainId: 31337,
-      blockGasLimit: 60000000 // Setting to 60M (see https://etherscan.io/chart/gaslimit)
+      blockGasLimit: 60000000, // Setting to 60M (see https://etherscan.io/chart/gaslimit)
+      accounts: {
+        count: 50
+      }
     },
     localhost: {
       url: "http://127.0.0.1:8545",

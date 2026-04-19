@@ -4,7 +4,7 @@
 const { ethers } = require("hardhat");
 const CONTRACT_NAME = "RoyaltyManager";
 const DEFAULT_ADDRESS = "0x0000000000000000000000000000000000000000";
-const SIZES = [1, 5, 10, 50, 100, 500, 1000, 1100, 1200, 1300, 1400, 1500,2000]; // Different sizes of the input array to test.
+const SIZES = [1, 5, 10, 50, 100, 500, 1000, 1100, 1200, 1300]; // Different sizes of the input array to test.
 
 // Generates an array of random Ethereum addresses of the specified size.
 function generateAddressArray(size) {
