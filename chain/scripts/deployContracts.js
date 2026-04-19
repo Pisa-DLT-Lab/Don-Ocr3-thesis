@@ -146,7 +146,7 @@ async function main() {
     // =========================================================
     console.log("Deploying OracleVerifier...");
     // Read the number of oracles from the .env file (defaults to 4 if not found)
-    const NUM_ORACLES = 4; //parseInt(process.env.NUM_ORACLES || "4");
+    const NUM_ORACLES = parseInt(process.env.NUM_ORACLES || "4");
     const REAL_DIGEST = resolveConfigDigest(NUM_ORACLES);
     const signers = await hre.ethers.getSigners();
     const modelCreator = signers[0]; // Wallet 0

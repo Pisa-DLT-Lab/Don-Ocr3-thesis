@@ -4,18 +4,13 @@
 const { ethers } = require("hardhat");
 const CONTRACT_NAME = "OracleVerifier";
 const CONFIG_DIGEST = "0x0000000000000000000000000000000000000000000000000000000000000000";
-const F_MAX = 40;
-
-// Generates a random Ethereum address (for testing purposes only).
-function randomAddress() {
-    return ethers.Wallet.createRandom().address;
-}
+const F_MAX = 50; // Maximum number of faulty oracles to test.
 
 // Generates an array of random Ethereum addresses of the specified size.
 function generateAddressArray(size) {
     const array = [];
     for (let i = 0; i < size; i++) {
-        array.push(randomAddress());
+        array.push(ethers.Wallet.createRandom().address);
     }
     return array;
 }
@@ -35,6 +30,7 @@ describe("OracleVerifier Deployment Gas", function () {
     }
 
     it("Deploys OracleVerifier for different values of f", async () => {
+        console.log(`N. of faulty nodes\tGas Used`);
         for (let f = 1; f <= F_MAX; f++) {
             const gasUsed = await deployAndMeasure(f);
             console.log(`${f}\t${gasUsed.toString()}`);

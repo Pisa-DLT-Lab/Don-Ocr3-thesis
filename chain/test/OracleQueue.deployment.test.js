@@ -1,3 +1,5 @@
+// This test measures the gas used for deploying the OracleQueue contract.
+
 const { ethers } = require("hardhat");
 
 describe("OracleQueue Deployment Gas", function () {
