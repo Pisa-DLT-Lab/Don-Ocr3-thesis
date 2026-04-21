@@ -1,7 +1,20 @@
 const hre = require("hardhat");
 require("dotenv").config({ path: "../.env" });
 
-// Function to verify the first numbers of the array
+const SCORE_BITS = 96n;
+const SCORE_MASK = (1n << SCORE_BITS) - 1n;
+
+function decodeHolderScore(packedValue) {
+  const packed = BigInt(packedValue.toString());
+  if (packed < 0n) {
+    throw new Error(`Packed holder-score cannot be negative: ${packed}`);
+  }
+  return {
+    holderId: packed >> SCORE_BITS,
+    score: packed & SCORE_MASK,
+  };
+}
+
 async function main() {
   const CONTRACT_ADDR = process.env.AGGREGATOR_ADDRESS;
 
@@ -53,26 +66,13 @@ async function main() {
     console.log(`   - Saved By:  ${submitter}`);
     console.log(`   - Array Len: ${flatMatrix.length} items`);
 
-    console.log("\nDecoded Values (First 10 items):");
-    console.log("   (Converting fixed-point 1e18 to Float)");
-    console.log("   ----------------------------------------");
+    console.log("\nDecoded Final Scores:");
+    console.log("   ------------------------------------");
 
-    // Show the first 10 int, avoid to dipslay 2500 int
-    const limit = Math.min(flatMatrix.length, 10);
-    
-    for (let i = 0; i < limit; i++) {
-        // Data arrive as BigInt (es. 1000000000000000000n)
-        // Use formatUnits to divide for 10^18; replaces the .
-        const floatValue = hre.ethers.formatUnits(flatMatrix[i], 18);
-        console.log(`   [${i}]: ${floatValue}`);
-    }
-
-    if (flatMatrix.length > 10) {
-        console.log(`   ... (+ other ${flatMatrix.length - 10} items hidden)`);
-        
-        // Print the last for confirm
-        const lastVal = hre.ethers.formatUnits(flatMatrix[flatMatrix.length - 1], 18);
-        console.log(`   [LAST]: ${lastVal}`);
+    for (let i = 0; i < flatMatrix.length; i++) {
+        const { holderId, score } = decodeHolderScore(flatMatrix[i]);
+        const scoreFixed = hre.ethers.formatUnits(score, 18);
+        console.log(`   [${i}]: holder=${holderId.toString()} score=${scoreFixed}`);
     }
 
     console.log("\nSUCCESS: Data verified on-chain!");

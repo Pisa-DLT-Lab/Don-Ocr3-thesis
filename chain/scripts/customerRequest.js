@@ -1,6 +1,77 @@
 const hre = require("hardhat");
 const { resolveCustomerSigner } = require("./lib/signers");
 
+const FILTER_POLICIES = {
+    TOP_VALUES: 0,
+    TOP_HOLDERS: 1,
+};
+
+function argValue(name) {
+    const prefix = `${name}=`;
+    const found = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
+    if (found) {
+        return found.slice(prefix.length);
+    }
+    const index = process.argv.indexOf(name);
+    if (index !== -1 && process.argv[index + 1]) {
+        return process.argv[index + 1];
+    }
+    return null;
+}
+
+function resolveRequestedFilterPolicy() {
+    const raw = argValue("--filter-policy") || process.env.FILTER_POLICY_REQUEST;
+    if (!raw || raw.trim() === "") {
+        return null;
+    }
+
+    const normalized = raw.trim().toUpperCase();
+    if (normalized === "0") {
+        return { name: "TOP_VALUES", value: FILTER_POLICIES.TOP_VALUES };
+    }
+    if (normalized === "1") {
+        return { name: "TOP_HOLDERS", value: FILTER_POLICIES.TOP_HOLDERS };
+    }
+    if (Object.prototype.hasOwnProperty.call(FILTER_POLICIES, normalized)) {
+        return { name: normalized, value: FILTER_POLICIES[normalized] };
+    }
+    throw new Error(`Invalid filter policy: ${raw}. Use TOP_VALUES or TOP_HOLDERS.`);
+}
+
+function resolveRequestedThreshold() {
+    const raw = argValue("--threshold") || process.env.FILTER_THRESHOLD_REQUEST;
+    if (!raw || raw.trim() === "") {
+        return null;
+    }
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed)) {
+        throw new Error(`Invalid threshold: ${raw}. Use a non-negative integer.`);
+    }
+    return BigInt(trimmed);
+}
+
+async function maybeSetFilterPolicy(aggregatorAddress) {
+    const requestedPolicy = resolveRequestedFilterPolicy();
+    const requestedThreshold = resolveRequestedThreshold();
+    if (requestedPolicy === null && requestedThreshold === null) {
+        return;
+    }
+
+    const [ownerWallet] = await hre.ethers.getSigners();
+    const aggregatorAsOwner = await hre.ethers.getContractAt("Aggregator", aggregatorAddress, ownerWallet);
+    const [currentPolicy, currentThreshold] = await aggregatorAsOwner.getFilterPolicy();
+
+    const policy = requestedPolicy || {
+        name: Number(currentPolicy) === FILTER_POLICIES.TOP_HOLDERS ? "TOP_HOLDERS" : "TOP_VALUES",
+        value: Number(currentPolicy),
+    };
+    const threshold = requestedThreshold === null ? currentThreshold : requestedThreshold;
+
+    console.log(`[CHAIN] Setting filter policy before request: ${policy.name}, threshold=${threshold.toString()}`);
+    const tx = await aggregatorAsOwner.setFilterPolicy(policy.value, threshold);
+    await tx.wait();
+}
+
 /**
  * customerRequest.js
  * Simulates a customer placing a request by uploading data to IPFS
@@ -10,6 +81,8 @@ async function main() {
     console.log("[CUSTOMER] Starting request and payment workflow...");
 
     const aggregatorAddress = process.env.AGGREGATOR_ADDRESS;
+    await maybeSetFilterPolicy(aggregatorAddress);
+
     const { signer: customerWallet, index, signerCount } = await resolveCustomerSigner(hre, aggregatorAddress);
     console.log(`[CHAIN] Using customer signer #${index}/${signerCount - 1}: ${customerWallet.address}`);
 

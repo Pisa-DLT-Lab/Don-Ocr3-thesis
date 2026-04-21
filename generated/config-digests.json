@@ -71,6 +71,18 @@
       "oracle_private_keys_sha256": "ed602062c462c4573909c54936d4e1feb76eb7c9d6c2bec15c651ee71b07a97a",
       "source": "auto",
       "version": 1
+    },
+    "f8b917540445b172d802d258b22bc0c95a21b3b0569a4e5c465923e3564508ab": {
+      "config_digest": "0x000142db9def8c505fa2303890bedb9bfb41b5b6c15a9b86812243c90fd58165",
+      "digest_source_sha256": "014d1a5472aab014deb1b48910b42a38b76b0ffc0602916772c378bfa550bab7",
+      "fault_tolerance": 3,
+      "key_seed": "42",
+      "network_seed": 42,
+      "num_oracles": 12,
+      "ocr_seed": 1,
+      "oracle_private_keys_sha256": "eead6c975c7bf8d92c3ffbb963f1632d7d96739a6a1bf3b7960dd5e4ee3126a8",
+      "source": "auto",
+      "version": 1
     }
   },
   "version": 1

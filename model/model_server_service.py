@@ -47,6 +47,7 @@ JOB_QUEUE = queue.Queue()
 # Global model variables
 ctx = nullcontext()
 torch.manual_seed(SEED)
+np.random.seed(SEED)
 train_data = np.memmap(TRAIN_DATASET_PATH, dtype=np.uint16, mode='r')
 train_dataset = CustomDataset(train_data, BLOCK_SIZE)
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
