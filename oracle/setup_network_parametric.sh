@@ -3,17 +3,34 @@ set -eu
 
 echo "[NETWORK] Parametric tc initialization for ORACLE_ID=${ORACLE_ID:-unset}"
 
+start_oracle() {
+    exec /usr/local/bin/wait-for-deploy.sh "$@"
+}
+
+run_tc() {
+    output="$(tc "$@" 2>&1)" || {
+        status="$?"
+        echo "$output" >&2
+        case "$output" in
+            *"Specified qdisc kind is unknown."*)
+                echo "[NETWORK] Required tc qdisc support is missing in the Docker host kernel." >&2
+                echo "[NETWORK] Load/enable sch_prio, sch_netem, and cls_u32 support before starting the latency-enabled stack." >&2
+                ;;
+        esac
+        exit "$status"
+    }
+}
+
 if [ "${ENABLE_LATENCY:-true}" != "true" ]; then
     echo "[NETWORK] Latency disabled; skipping tc setup"
-    exec /usr/local/bin/wait-for-deploy.sh "$@"
+    start_oracle "$@"
 fi
 
 : "${ORACLE_ID:?ORACLE_ID is required}"
 : "${NUM_ORACLES:?NUM_ORACLES is required}"
-: "${NETWORK_SEED:?NETWORK_SEED is required}"
 : "${ORACLE_IPS:?ORACLE_IPS is required}"
-
-NETWORK_LOCATIONS="${NETWORK_LOCATIONS:-Milan,Toronto,Moscow,Lisbon,Mumbai,Johannesburg,NewYork}"
+: "${ORACLE_LOCATIONS:?ORACLE_LOCATIONS is required}"
+: "${LATENCY_MATRIX_FILE:?LATENCY_MATRIX_FILE is required}"
 
 is_uint() {
     case "$1" in
@@ -34,98 +51,69 @@ csv_field() {
     }'
 }
 
-canonical_location() {
-    key="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d ' _-\r')"
-    case "$key" in
-        milan|milano) echo "Milan" ;;
-        newyork|ny) echo "NewYork" ;;
-        mumbai) echo "Mumbai" ;;
-        johannesburg|joburg) echo "Johannesburg" ;;
-        lisbon|lisboa) echo "Lisbon" ;;
-        moscow|mosca) echo "Moscow" ;;
-        toronto) echo "Toronto" ;;
-        *) echo "$1" ;;
-    esac
-}
-
-choose_location() {
-    oracle_index="$1"
-    location_count="$(csv_count "$NETWORK_LOCATIONS")"
-    if [ "$location_count" -lt 1 ]; then
-        echo "[NETWORK] NETWORK_LOCATIONS must contain at least one location" >&2
-        exit 1
-    fi
-
-    hex="$(printf '%s:%s' "$NETWORK_SEED" "$oracle_index" | sha256sum | awk '{ print substr($1, 1, 6) }')"
-    value=$((0x$hex))
-    field=$((value % location_count + 1))
-    canonical_location "$(csv_field "$NETWORK_LOCATIONS" "$field")"
-}
-
 latency_between() {
-    src="$(canonical_location "$1")"
-    dst="$(canonical_location "$2")"
+    src="$1"
+    dst="$2"
 
     if [ "$src" = "$dst" ]; then
         echo 0
-        return
+        return 0
     fi
 
-    case "$src:$dst" in
-        Milan:NewYork) echo 90 ;;
-        Milan:Mumbai) echo 120 ;;
-        Milan:Johannesburg) echo 175 ;;
-        Milan:Lisbon) echo 50 ;;
-        Milan:Moscow) echo 45 ;;
-        Milan:Toronto) echo 110 ;;
+    result="$(
+        awk -F, -v src="$src" -v dst="$dst" '
+            BEGIN {
+                status = 4
+                found = 0
+                col = 0
+            }
+            NR == 1 {
+                for (i = 2; i <= NF; i++) {
+                    if ($i == dst) {
+                        col = i
+                        break
+                    }
+                }
+                if (col == 0) {
+                    status = 2
+                }
+                next
+            }
+            $1 == src {
+                found = 1
+                if (col == 0) {
+                    status = 2
+                    exit
+                }
+                value = $col
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                if (value == "") {
+                    status = 3
+                    exit
+                }
+                print value
+                status = 0
+                exit
+            }
+            END {
+                if (found == 0 && status != 2) {
+                    status = 4
+                }
+                exit status
+            }
+        ' "$LATENCY_MATRIX_FILE"
+    )" || {
+        status="$?"
+        case "$status" in
+            2) echo "[NETWORK] Missing destination region in latency matrix: $dst" >&2 ;;
+            3) echo "[NETWORK] Missing latency pair: $src -> $dst" >&2 ;;
+            4) echo "[NETWORK] Missing source region in latency matrix: $src" >&2 ;;
+            *) echo "[NETWORK] Failed reading latency matrix for $src -> $dst" >&2 ;;
+        esac
+        return "$status"
+    }
 
-        NewYork:Milan) echo 90 ;;
-        NewYork:Mumbai) echo 190 ;;
-        NewYork:Johannesburg) echo 230 ;;
-        NewYork:Lisbon) echo 115 ;;
-        NewYork:Moscow) echo 120 ;;
-        NewYork:Toronto) echo 17 ;;
-
-        Mumbai:Milan) echo 120 ;;
-        Mumbai:NewYork) echo 190 ;;
-        Mumbai:Johannesburg) echo 290 ;;
-        Mumbai:Lisbon) echo 150 ;;
-        Mumbai:Moscow) echo 175 ;;
-        Mumbai:Toronto) echo 240 ;;
-
-        Johannesburg:Milan) echo 175 ;;
-        Johannesburg:NewYork) echo 230 ;;
-        Johannesburg:Mumbai) echo 290 ;;
-        Johannesburg:Lisbon) echo 210 ;;
-        Johannesburg:Moscow) echo 200 ;;
-        Johannesburg:Toronto) echo 225 ;;
-
-        Lisbon:Milan) echo 50 ;;
-        Lisbon:NewYork) echo 110 ;;
-        Lisbon:Mumbai) echo 150 ;;
-        Lisbon:Johannesburg) echo 210 ;;
-        Lisbon:Moscow) echo 80 ;;
-        Lisbon:Toronto) echo 120 ;;
-
-        Moscow:Milan) echo 45 ;;
-        Moscow:NewYork) echo 120 ;;
-        Moscow:Mumbai) echo 175 ;;
-        Moscow:Johannesburg) echo 200 ;;
-        Moscow:Lisbon) echo 80 ;;
-        Moscow:Toronto) echo 140 ;;
-
-        Toronto:Milan) echo 110 ;;
-        Toronto:NewYork) echo 17 ;;
-        Toronto:Mumbai) echo 240 ;;
-        Toronto:Johannesburg) echo 230 ;;
-        Toronto:Lisbon) echo 120 ;;
-        Toronto:Moscow) echo 140 ;;
-
-        *)
-            echo "[NETWORK] Missing latency pair: $src -> $dst" >&2
-            exit 1
-            ;;
-    esac
+    echo "$result"
 }
 
 if ! is_uint "$ORACLE_ID" || ! is_uint "$NUM_ORACLES"; then
@@ -138,24 +126,40 @@ if [ "$ORACLE_ID" -ge "$NUM_ORACLES" ]; then
     exit 1
 fi
 
+if [ ! -r "$LATENCY_MATRIX_FILE" ]; then
+    echo "[NETWORK] Latency matrix is not readable: $LATENCY_MATRIX_FILE" >&2
+    exit 1
+fi
+
 ip_count="$(csv_count "$ORACLE_IPS")"
 if [ "$ip_count" -lt "$NUM_ORACLES" ]; then
     echo "[NETWORK] ORACLE_IPS has $ip_count entries but NUM_ORACLES=$NUM_ORACLES" >&2
     exit 1
 fi
 
-src_location="$(choose_location "$ORACLE_ID")"
-echo "[NETWORK] oracle${ORACLE_ID} assigned location: ${src_location}"
+location_count="$(csv_count "$ORACLE_LOCATIONS")"
+if [ "$location_count" -lt "$NUM_ORACLES" ]; then
+    echo "[NETWORK] ORACLE_LOCATIONS has $location_count entries but NUM_ORACLES=$NUM_ORACLES" >&2
+    exit 1
+fi
+
+src_location="$(csv_field "$ORACLE_LOCATIONS" "$((ORACLE_ID + 1))")"
+if [ -z "$src_location" ]; then
+    echo "[NETWORK] Empty location for oracle${ORACLE_ID}" >&2
+    exit 1
+fi
+
+echo "[NETWORK] oracle${ORACLE_ID} assigned Azure region: ${src_location}"
 
 tc qdisc del dev eth0 root 2>/dev/null || true
-tc qdisc add dev eth0 root handle 1: prio bands "$((NUM_ORACLES + 1))"
+run_tc qdisc add dev eth0 root handle 1: prio bands "$((NUM_ORACLES + 1))"
 
 i=0
 band=1
 while [ "$i" -lt "$NUM_ORACLES" ]; do
     if [ "$i" != "$ORACLE_ID" ]; then
         dst_ip="$(csv_field "$ORACLE_IPS" "$((i + 1))")"
-        dst_location="$(choose_location "$i")"
+        dst_location="$(csv_field "$ORACLE_LOCATIONS" "$((i + 1))")"
         delay_ms="$(latency_between "$src_location" "$dst_location")"
 
         if [ -n "$dst_ip" ] && [ "$delay_ms" != "0" ]; then
@@ -164,8 +168,8 @@ while [ "$i" -lt "$NUM_ORACLES" ]; do
 
             echo "[NETWORK] oracle${ORACLE_ID} (${src_location}) -> oracle${i} (${dst_location}) ${dst_ip}: ${delay_ms}ms"
 
-            tc qdisc add dev eth0 parent "1:${band}" handle "${handle}:" netem delay "${delay_ms}ms"
-            tc filter add dev eth0 protocol ip parent 1:0 prio "$band" \
+            run_tc qdisc add dev eth0 parent "1:${band}" handle "${handle}:" netem delay "${delay_ms}ms"
+            run_tc filter add dev eth0 protocol ip parent 1:0 prio "$band" \
                 u32 match ip dst "$dst_ip" flowid "1:${band}"
         fi
     fi

@@ -20,8 +20,8 @@ FROM alpine:latest
 
 WORKDIR /root/
 
-# Install iproute2 to use tc command and curl to wait for deployed contracts.
-RUN apk add --no-cache iproute2 curl
+# Install tc qdisc support for latency shaping and curl to wait for deployed contracts.
+RUN apk add --no-cache iproute2 iproute2-tc curl
 
 COPY --from=builder /out/oracle /usr/local/bin/oracle
 

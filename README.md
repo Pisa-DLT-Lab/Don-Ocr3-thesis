@@ -66,29 +66,9 @@ To test the full system, follow this chronological sequence.
 > **Note - Byzantine Testing:** You can test the BFT consensus by simulating malicious node behavior. In the generated Compose file, change a node's `MALICIOUS_MODE` environment variable to `"transmit_fail"`, `"timeout"`, or `"alter"`.
 
 ---
-## Step 1: Start the AI Backend and SSH Tunnel
+## Step 1: Start the Local AI Backend
 
-The oracles communicate with the Python AI server hosted on the remote machine (`satoshi`).
-
-### Option A: Use the remote server
-
-### 1. Access the remote server via SSH tunnel
-
-```bash
-ssh -L 9090:127.0.0.1:50100 tomelliniT@131.114.50.205
-```
-### 2. Follow this path
- Go in `data/tomelliniT/oc3-thesis/alps-ai-master/model`. Run `source env/bin/activate` to activate the python environment and then you can proceed by starting the server.
-
-### 3. Start the Python model service
-
-```bash
-python model_service_v2.py
-```
-
-### Option B: Run the local model service
-
-You can also run the attribution service locally. From the repository root:
+The oracle containers expect the attribution service to be reachable at `host.docker.internal:9090`. From the repository root:
 
 ```bash
 cd model
@@ -136,6 +116,45 @@ Run a generated experiment by passing:
 - `NUM_ORACLES`
 - `NETWORK_SEED`
 
+The generated oracle placement first selects one macro region with these probabilities:
+
+| Macro region | Patent applications | Placement probability |
+| --- | ---: | ---: |
+| Africa | 19,100 | 0.5127516779% |
+| Asia | 2,612,500 | 70.1342281879% |
+| Europe | 362,700 | 9.7369127517% |
+| LAC | 55,600 | 1.4926174497% |
+| Northern America | 638,600 | 17.1436241611% |
+| Oceania | 36,500 | 0.9798657718% |
+
+Within the selected macro region, the generator distributes probability evenly across eligible Azure subgroups, then evenly across eligible Azure regions in each subgroup.
+
+### Option A: Toxiproxy latency
+
+Use this option on WSL or any Docker host where Linux `tc netem` qdisc support is unavailable.
+
+Example with 7 oracles and seed `123`:
+
+```bash
+scripts/run_generated_stack_toxiproxy.sh 7 123
+```
+
+For 5 oracles:
+
+```bash
+scripts/run_generated_stack_toxiproxy.sh 5 42
+```
+
+To force one fixed latency for every Toxiproxy oracle endpoint:
+
+```bash
+scripts/run_generated_stack_toxiproxy.sh 7 123 --toxiproxy-latency-ms 100
+```
+
+### Option B: Kernel `tc netem` latency
+
+Use this option on Linux hosts with `sch_prio`, `sch_netem`, and `cls_u32` support.
+
 Example with 7 oracles and seed `123`:
 
 ```bash
@@ -158,6 +177,8 @@ If the first OCR digest computation is slow, pre-pull the main images:
 
 ```bash
 docker pull golang:1.24-alpine
+docker pull ghcr.io/shopify/toxiproxy:2.12.0
+docker pull curlimages/curl:8.10.1
 docker pull node:18-alpine
 docker pull alpine:latest
 docker pull ipfs/kubo:latest
@@ -184,11 +205,21 @@ FILTER_THRESHOLD=100
 - Oracle private keys are deterministically derived from the seed
 - A generated Hardhat config funds those oracle accounts
 - The OCR config digest is computed and cached
-- `chain/scripts/deployContracts.js` deploys contracts using the selected digest from `CONFIG_DIGEST`
-- `chain/scripts/deployContracts.js` sets the Aggregator filter policy from `.env`
+- `generated/deployContracts.generated.js` deploys contracts using the selected digest from `CONFIG_DIGEST`
+- `generated/deployContracts.generated.js` sets the Aggregator filter policy from `.env`
 - The oracle containers read `AGGREGATOR_ADDRESS` from `.env`; Queue, Verifier, and filter policy are discovered from Aggregator on-chain
-- `oracle/setup_network_parametric.sh` assigns deterministic pseudo-random locations and applies `tc netem` latency by default
+- `scripts/generate_compose.py` assigns deterministic WIPO-weighted Azure regions from `NETWORK_SEED` and `ORACLE_ID`
+- `oracle/setup_network_parametric.sh` reads those generated Azure regions and applies `tc netem` latency by default
 - Docker Compose builds and starts the chain, IPFS, bootstrap, and oracle containers
+
+### Latency data sources
+
+In the absence of precise data about where oracle services are geographically deployed, we use regional patent application counts as a proxy for regional technological activity and derive placement probabilities from the latest available WIPO data.
+
+- `oracle/latency/wipo_patent_region_probabilities.csv` stores the WIPO-derived region placement probabilities. Source: WIPO IP Statistics Data Center, key search `203`: https://www3.wipo.int/ipstats/key-search/search-result?type=KEY&key=203
+- `oracle/latency/azure_region_latencies.csv` stores the Azure inter-region latency matrix used for `tc netem` latency assignment. Source: Microsoft Azure network round-trip latency statistics: https://learn.microsoft.com/en-us/azure/networking/azure-network-latency?tabs=Americas%2CWestUS
+- Azure latency values are P50 round-trip latency in milliseconds between Azure regions, matching the Microsoft Learn table.
+- Generated oracle locations are deterministic from `NETWORK_SEED` and `ORACLE_ID`.
 
 Wait until you see the message:
 

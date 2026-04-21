@@ -9,7 +9,6 @@ Usage:
 Examples:
   scripts/run_generated_stack.sh 7 123
   scripts/run_generated_stack.sh 10 999 --disable-latency
-  scripts/run_generated_stack.sh 7 123 --locations Milan,Toronto,Moscow,Lisbon,Mumbai,Johannesburg,NewYork
 
 Environment overrides:
   ENV_FILE=.env

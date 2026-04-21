@@ -4,8 +4,7 @@
 * docker-compose.generated.yml is written as a new file.
 * generated/hardhat.config.generated.js is written as a new file.
 * generated/deployContracts.generated.js is written as a trace/debug artifact.
-* the chain service mounts the generated Hardhat config.
-* the chain service passes CONFIG_DIGEST to chain/scripts/deployContracts.js.
+* the chain service mounts the generated Hardhat config and deploy script.
 * oracle services mount oracle/setup_network_parametric.sh at runtime.
 
 Usage:
@@ -16,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import ipaddress
 import json
@@ -41,7 +41,54 @@ DEFAULT_DEPLOYER_PRIVATE_KEY = (
 )
 
 DEFAULT_BALANCE_WEI = "10000000000000000000000"  # 10000 ETH
-DEFAULT_LOCATIONS = "Milan,Toronto,Moscow,Lisbon,Mumbai,Johannesburg,NewYork"
+WIPO_PROBABILITY_CSV = Path("oracle/latency/wipo_patent_region_probabilities.csv")
+AZURE_LATENCY_CSV = Path("oracle/latency/azure_region_latencies.csv")
+LATENCY_MATRIX_CONTAINER_PATH = "/usr/local/share/oracle/azure_region_latencies.csv"
+
+AZURE_REGION_GROUPS: dict[str, dict[str, list[str]]] = {
+    "Northern America": {
+        "West US": ["West US", "West US 2", "West US 3", "West Central US"],
+        "Central US": ["Central US", "North Central US", "South Central US"],
+        "East US": ["East US", "East US 2"],
+        "Canada": ["Canada Central", "Canada East"],
+    },
+    "LAC": {
+        "South America": ["Brazil South"],
+        "Mexico": ["Mexico Central"],
+    },
+    "Europe": {
+        "Western Europe": ["West Europe", "France Central", "France South"],
+        "Central Europe": [
+            "Germany North",
+            "Germany West Central",
+            "Italy North",
+            "Poland Central",
+            "Switzerland North",
+            "Switzerland West",
+        ],
+        "Nordic Countries": ["Norway East", "Norway West", "Sweden Central"],
+        "UK / Northern Europe": ["UK South", "UK West", "North Europe"],
+    },
+    "Asia": {
+        "Japan": ["Japan East", "Japan West"],
+        "Korea": ["Korea Central", "Korea South"],
+        "India": ["Central India", "South India", "West India"],
+        "Asia": ["East Asia", "Southeast Asia", "Malaysia West"],
+        "Middle East": ["Israel Central", "Qatar Central", "UAE Central", "UAE North"],
+    },
+    "Oceania": {
+        "Australia / New Zealand": [
+            "Australia Central",
+            "Australia Central 2",
+            "Australia East",
+            "Australia Southeast",
+            "New Zealand North",
+        ],
+    },
+    "Africa": {
+        "Africa": ["South Africa North", "South Africa West"],
+    },
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,14 +120,6 @@ def parse_args() -> argparse.Namespace:
         "--fault-tolerance",
         type=int,
         help="OCR fault tolerance. Defaults to floor((NUM_ORACLES - 1) / 3).",
-    )
-    parser.add_argument(
-        "--locations",
-        default=DEFAULT_LOCATIONS,
-        help=(
-            "Comma-separated location pool used by setup_network_parametric.sh. "
-            f"Default: {DEFAULT_LOCATIONS}"
-        ),
     )
     parser.add_argument(
         "--out",
@@ -258,6 +297,152 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def load_wipo_region_weights(path: Path) -> list[tuple[str, float]]:
+    if not path.exists():
+        raise SystemExit(f"missing WIPO probability CSV: {path}")
+
+    with path.open(newline="", encoding="utf-8") as file:
+        rows = list(csv.DictReader(file))
+
+    weights: list[tuple[str, float]] = []
+    for row in rows:
+        region = (row.get("region") or "").strip()
+        share = (row.get("share_percent") or "").strip()
+        if not region or not share:
+            raise SystemExit(f"invalid WIPO probability row in {path}: {row}")
+        try:
+            weights.append((region, float(share)))
+        except ValueError as exc:
+            raise SystemExit(f"invalid share_percent for {region}: {share}") from exc
+
+    if not weights:
+        raise SystemExit(f"WIPO probability CSV has no rows: {path}")
+
+    return weights
+
+
+def load_latency_matrix(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        raise SystemExit(f"missing Azure latency CSV: {path}")
+
+    with path.open(newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        if not reader.fieldnames or reader.fieldnames[0] != "Source":
+            raise SystemExit(f"invalid Azure latency CSV header in {path}")
+        return {
+            (row["Source"] or "").strip(): {
+                (column or "").strip(): (value or "").strip()
+                for column, value in row.items()
+                if column and column != "Source"
+            }
+            for row in reader
+            if (row.get("Source") or "").strip()
+        }
+
+
+def complete_latency_regions(
+    matrix: dict[str, dict[str, str]],
+    candidate_regions: Iterable[str],
+) -> set[str]:
+    all_destinations = {
+        destination
+        for row in matrix.values()
+        for destination in row
+    }
+    remaining = {
+        region
+        for region in candidate_regions
+        if region in matrix and region in all_destinations
+    }
+
+    while True:
+        bad_regions: set[str] = set()
+        for src in remaining:
+            for dst in remaining:
+                if src == dst:
+                    continue
+                if not matrix.get(src, {}).get(dst):
+                    bad_regions.add(src)
+                    bad_regions.add(dst)
+
+        if not bad_regions:
+            return remaining
+        remaining -= bad_regions
+
+
+def build_weighted_azure_regions(
+    wipo_weights: list[tuple[str, float]],
+    matrix: dict[str, dict[str, str]],
+) -> list[tuple[str, float]]:
+    configured_regions = [
+        region
+        for subgroups in AZURE_REGION_GROUPS.values()
+        for regions in subgroups.values()
+        for region in regions
+    ]
+    complete_regions = complete_latency_regions(matrix, configured_regions)
+
+    weighted_regions: list[tuple[str, float]] = []
+    for macro_region, macro_weight in wipo_weights:
+        subgroups = AZURE_REGION_GROUPS.get(macro_region)
+        if not subgroups:
+            raise SystemExit(f"no Azure region mapping for WIPO region: {macro_region}")
+
+        eligible_subgroups = [
+            [region for region in regions if region in complete_regions]
+            for regions in subgroups.values()
+        ]
+        eligible_subgroups = [regions for regions in eligible_subgroups if regions]
+        if not eligible_subgroups:
+            raise SystemExit(
+                f"no complete Azure latency regions available for {macro_region}"
+            )
+
+        subgroup_weight = macro_weight / len(eligible_subgroups)
+        for regions in eligible_subgroups:
+            region_weight = subgroup_weight / len(regions)
+            weighted_regions.extend((region, region_weight) for region in regions)
+
+    if not weighted_regions:
+        raise SystemExit("no Azure regions available for weighted placement")
+
+    return weighted_regions
+
+
+def deterministic_fraction(seed: int, oracle_index: int, salt: str) -> float:
+    digest = hashlib.sha256(f"{seed}:{oracle_index}:{salt}".encode("utf-8")).hexdigest()
+    return int(digest[:16], 16) / float(16**16)
+
+
+def weighted_choice(
+    weighted_values: list[tuple[str, float]],
+    seed: int,
+    oracle_index: int,
+    salt: str,
+) -> str:
+    total = sum(weight for _, weight in weighted_values)
+    if total <= 0:
+        raise SystemExit("weighted values must have positive total weight")
+
+    threshold = deterministic_fraction(seed, oracle_index, salt) * total
+    cumulative = 0.0
+    for value, weight in weighted_values:
+        cumulative += weight
+        if threshold < cumulative:
+            return value
+    return weighted_values[-1][0]
+
+
+def assign_oracle_locations(repo_root: Path, args: argparse.Namespace) -> list[str]:
+    wipo_weights = load_wipo_region_weights(repo_root / WIPO_PROBABILITY_CSV)
+    matrix = load_latency_matrix(repo_root / AZURE_LATENCY_CSV)
+    weighted_regions = build_weighted_azure_regions(wipo_weights, matrix)
+    return [
+        weighted_choice(weighted_regions, args.network_seed, oracle_index, "azure-region")
+        for oracle_index in range(args.num_oracles)
+    ]
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as file:
@@ -350,6 +535,7 @@ def render_compose(
     env_file_path: Path,
     oracle_private_keys: list[str],
     oracle_ips: list[str],
+    oracle_locations: list[str],
     config_digest: str,
 ) -> str:
     compose_dir = output_path.parent
@@ -358,12 +544,15 @@ def render_compose(
     latency_script = compose_path(
         compose_dir, repo_root / "oracle" / "setup_network_parametric.sh"
     )
+    latency_matrix = compose_path(compose_dir, repo_root / AZURE_LATENCY_CSV)
     hardhat_config = compose_path(compose_dir, hardhat_config_path)
+    deploy_script = compose_path(compose_dir, deploy_script_path)
     env_file = compose_path(compose_dir, env_file_path)
     ipfs_data = compose_path(compose_dir, repo_root / "IpfsAgent" / "ipfs_data")
     ipfs_staging = compose_path(compose_dir, repo_root / "IpfsAgent" / "ipfs_staging")
 
     oracle_ips_csv = ",".join(oracle_ips)
+    oracle_locations_csv = ",".join(oracle_locations)
     enable_latency = "true" if args.enable_latency else "false"
 
     lines: list[str] = [
@@ -373,7 +562,7 @@ def render_compose(
         f"# KEY_SEED={args.key_seed}",
         "# The chain service mounts a generated Hardhat config so the seed-derived",
         "# oracle accounts are funded when npx hardhat node starts.",
-        "# The chain service passes CONFIG_DIGEST to chain/scripts/deployContracts.js.",
+        "# The chain service mounts a generated deploy script with matching OCR params.",
     ]
 
     lines.extend(
@@ -395,8 +584,9 @@ def render_compose(
         "FAULT_TOLERANCE": str(args.fault_tolerance),
         "OCR_SEED": str(args.ocr_seed),
         "NETWORK_SEED": str(args.network_seed),
-        "NETWORK_LOCATIONS": args.locations,
         "ORACLE_IPS": oracle_ips_csv,
+        "ORACLE_LOCATIONS": oracle_locations_csv,
+        "LATENCY_MATRIX_FILE": LATENCY_MATRIX_CONTAINER_PATH,
         "ENABLE_LATENCY": enable_latency,
     }
 
@@ -429,6 +619,7 @@ def render_compose(
             f"      CONFIG_DIGEST: {yaml_quote(config_digest)}",
             "    volumes:",
             f"      - {yaml_quote(f'{hardhat_config}:/app/hardhat.config.js:ro')}",
+            f"      - {yaml_quote(f'{deploy_script}:/app/scripts/deployContracts.js:ro')}",
             "",
             "  ipfs:",
             "    image: ipfs/kubo:latest",
@@ -514,6 +705,7 @@ def render_compose(
                 f"      ORACLE_ID: {yaml_quote(idx)}",
                 "    volumes:",
                 f"      - {yaml_quote(f'{latency_script}:/usr/local/bin/setup_network_parametric.sh:ro')}",
+                f"      - {yaml_quote(f'{latency_matrix}:{LATENCY_MATRIX_CONTAINER_PATH}:ro')}",
             ]
         )
 
@@ -1074,6 +1266,7 @@ def main() -> int:
         for idx in range(args.num_oracles)
     ]
     oracle_ips = generate_oracle_ips(args.oracle_base_ip, args.num_oracles)
+    oracle_locations = assign_oracle_locations(repo_root, args)
     config_digest = compute_config_digest(
         repo_root,
         args,
@@ -1103,6 +1296,7 @@ def main() -> int:
             env_file_path=env_file_path,
             oracle_private_keys=oracle_private_keys,
             oracle_ips=oracle_ips,
+            oracle_locations=oracle_locations,
             config_digest=config_digest,
         ),
         encoding="utf-8",
@@ -1113,6 +1307,7 @@ def main() -> int:
     print(f"Wrote {display_path(repo_root, deploy_script_path)}")
     print(f"Digest cache: {display_path(repo_root, digest_cache_path)}")
     print(f"Computed CONFIG_DIGEST={config_digest}")
+    print(f"Oracle locations: {', '.join(oracle_locations)}")
     print()
     print("Run:")
     print(
