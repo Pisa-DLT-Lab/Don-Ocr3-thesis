@@ -145,12 +145,6 @@ For 5 oracles:
 scripts/run_generated_stack_toxiproxy.sh 5 42
 ```
 
-To force one fixed latency for every Toxiproxy oracle endpoint:
-
-```bash
-scripts/run_generated_stack_toxiproxy.sh 7 123 --toxiproxy-latency-ms 100
-```
-
 ### Option B: Kernel `tc netem` latency
 
 Use this option on Linux hosts with `sch_prio`, `sch_netem`, and `cls_u32` support.
@@ -216,9 +210,8 @@ FILTER_THRESHOLD=100
 
 In the absence of precise data about where oracle services are geographically deployed, we use regional patent application counts as a proxy for regional technological activity and derive placement probabilities from the latest available WIPO data.
 
-- `oracle/latency/wipo_patent_region_probabilities.csv` stores the WIPO-derived region placement probabilities. Source: WIPO IP Statistics Data Center, key search `203`: https://www3.wipo.int/ipstats/key-search/search-result?type=KEY&key=203
-- `oracle/latency/azure_region_latencies.csv` stores the Azure inter-region latency matrix used for `tc netem` latency assignment. Source: Microsoft Azure network round-trip latency statistics: https://learn.microsoft.com/en-us/azure/networking/azure-network-latency?tabs=Americas%2CWestUS
-- Azure latency values are P50 round-trip latency in milliseconds between Azure regions, matching the Microsoft Learn table.
+- `oracle/latency/wipo_patent_region_probabilities.csv` stores the WIPO-derived region placement probabilities. Source: WIPO IP Statistics Data Center: https://www3.wipo.int/ipstats/key-search/search-result?type=KEY&key=203
+- `oracle/latency/azure_region_latencies.csv` stores the Azure inter-region latency matrix used for toxiproxi and `tc netem` latency assignment. Source: https://learn.microsoft.com/en-us/azure/networking/azure-network-latency?tabs=Americas%2CWestUS
 - Generated oracle locations are deterministic from `NETWORK_SEED` and `ORACLE_ID`.
 
 Wait until you see the message:
@@ -228,18 +221,6 @@ Wait until you see the message:
 ```
 
 in the Docker logs before proceeding.
-
-### Manual Static Compose Mode
-
-The original static Compose file is still available:
-
-```bash
-docker compose up --build
-```
-
-This mode uses the fixed services declared in `docker-compose.yml`. To change the network size manually, edit `docker-compose.yml` and `.env` consistently.
-
----
 
 ## Step 3: Simulate the Workflow
 
@@ -252,7 +233,7 @@ Now you simulate the two actors of the system:
 
 ### 1. Start the Model Creator Listener
 
-Open a new terminal:
+Open a new terminal (1):
 
 ```bash
 cd chain
@@ -265,11 +246,17 @@ This script simulates the model creator listening for Aggregator request events.
 
 ### 2. Trigger the Customer Request
 
-Open another terminal:
+Open another terminal (2):
 
 ```bash
 cd chain
 npx hardhat run scripts/customerRequest.js --network localhost
+```
+Check for latest result in terminal (2):
+
+```bash
+cd chain
+npx hardhat run scripts/verify.js --network localhost
 ```
 
 Instead, for testing:
