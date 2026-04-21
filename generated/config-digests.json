@@ -24,6 +24,18 @@
       "source": "auto",
       "version": 1
     },
+    "642b342765e815d42cce9f1489cb1fc76549e52a049098fc28766151a0020698": {
+      "config_digest": "0x0001be86ab09e48cc6f8151dd0e7dd8535d73da00a77e89a71a54efbae5d97ee",
+      "digest_source_sha256": "014d1a5472aab014deb1b48910b42a38b76b0ffc0602916772c378bfa550bab7",
+      "fault_tolerance": 1,
+      "key_seed": "47",
+      "network_seed": 47,
+      "num_oracles": 4,
+      "ocr_seed": 1,
+      "oracle_private_keys_sha256": "1d0ceaec5f72df43c45fe4c323d9d0c5cf0155c3d414d853c7f7a9fc64022949",
+      "source": "auto",
+      "version": 1
+    },
     "7f8415de6babc7f26f39bfe84756701ba4621adde29c58757756e0167237cda0": {
       "config_digest": "0x0001de4e7b0f5f1f8d1ed9551586374820cde9aca7aae609171c83ee3783463d",
       "digest_source_sha256": "014d1a5472aab014deb1b48910b42a38b76b0ffc0602916772c378bfa550bab7",
@@ -45,6 +57,18 @@
       "num_oracles": 16,
       "ocr_seed": 1,
       "oracle_private_keys_sha256": "d2ed7ec461ec04b06d93bd32b75d7690e3b90499d2c6625b32936ba0ee758ac8",
+      "source": "auto",
+      "version": 1
+    },
+    "bde9738fac9f9a81157f103a8981bb05bd86b407252ea769fedc66538cd14730": {
+      "config_digest": "0x000141f5ee576fd5f51362b44b0ecb5d5816cfdc1b736c641103c091588c2ba2",
+      "digest_source_sha256": "014d1a5472aab014deb1b48910b42a38b76b0ffc0602916772c378bfa550bab7",
+      "fault_tolerance": 2,
+      "key_seed": "47",
+      "network_seed": 47,
+      "num_oracles": 7,
+      "ocr_seed": 1,
+      "oracle_private_keys_sha256": "ed602062c462c4573909c54936d4e1feb76eb7c9d6c2bec15c651ee71b07a97a",
       "source": "auto",
       "version": 1
     }

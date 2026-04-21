@@ -1,5 +1,6 @@
 const hre = require("hardhat");
 const fs = require("fs");
+const { resolveCustomerSigner } = require("./lib/signers");
 
 /**
  * benchmark.js
@@ -17,9 +18,8 @@ async function main() {
 
     const aggregatorAddress = process.env.AGGREGATOR_ADDRESS;
 
-    // Use Signer #10 as the 'Customer' to prevent nonce collisions with Oracles or Creator
-    const signers = await hre.ethers.getSigners();
-    const customerWallet = signers[10];
+    const { signer: customerWallet, index, signerCount } = await resolveCustomerSigner(hre, aggregatorAddress);
+    console.log(`[CHAIN] Using customer signer #${index}/${signerCount - 1}: ${customerWallet.address}`);
 
     const aggregatorContract = await hre.ethers.getContractAt("Aggregator", aggregatorAddress, customerWallet);
     const queueAddress = await aggregatorContract.queue();
@@ -31,14 +31,19 @@ async function main() {
     const csvFile = "benchmark_results.csv";
     const csvHeader = "Iteration,Timestamp,OffChain_Storage(ms),OnChain_RequestTx(ms),OnChain_ApprovalTx(ms),OCR_Consensus_And_FulfillmentTx(ms),Total_Latency(ms)\n";
     fs.writeFileSync(csvFile, csvHeader);
+    const promptVariants = [
+        "To be or not to be that is the question",
+        "O brave new world that has such people in it",
+        "The course of true love never did run smooth",
+        "All the world is a stage and all the men and women merely players",
+    ];
 
     for (let i = 1; i <= 20; i++) {
         console.log(`========================================`);
         console.log(` ITERATION ${i} / 20`);
         console.log(`========================================`);
 
-        // IMPORTANT: Removed '#' character to prevent AI Tokenizer KeyError
-        const simplePayload = `Automated Benchmark Prompt Payload number ${i}...`;
+        const simplePayload = promptVariants[(i - 1) % promptVariants.length];
         const t0 = performance.now();
 
         // ---------------------------------------------------------------------

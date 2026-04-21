@@ -52,7 +52,7 @@ The generated setup will:
 
 - Start the Hardhat local node
 - Wait for it to be ready
-- Fund the seed-derived oracle accounts in Hardhat
+- Fund the seed-derived oracle accounts plus one extra customer account in Hardhat
 - Deploy the smart contracts with the matching OCR config digest
 - Boot the off-chain oracle nodes
 - Apply deterministic simulated latency among oracle containers by default
@@ -283,6 +283,8 @@ At this point:
 - The computation starts
 - The oracle consensus begins
 - Royalties are calculated
+
+The customer scripts use signer `NUM_ORACLES + 1`, after account `0` for the model creator and accounts `1..NUM_ORACLES` for oracle nodes.
 
 You can monitor everything in the main Docker terminal.
 To check the current result through the Aggregator facade, use `verify.js` to inspect the first ten numbers of the vector.

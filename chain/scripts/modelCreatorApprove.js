@@ -22,6 +22,28 @@ async function main() {
   console.log(`[MODEL CREATOR] Monitoring Queue 'LogNewCustomerRequest' events...`);
 
   const MAX_RETRIES = 3;
+
+  function waitForFulfillment(jobId) {
+    console.log(`[WAIT] Awaiting OCR consensus for job #${jobId}...`);
+    return new Promise((resolve, reject) => {
+      let completionListener;
+      const timeout = setTimeout(() => {
+        verifierContract.off("JobCompleted", completionListener);
+        reject(new Error(`OCR fulfillment timeout for job #${jobId} (10m)`));
+      }, 600000);
+
+      completionListener = (completedId, submitter) => {
+        if (completedId.toString() === jobId.toString()) {
+          clearTimeout(timeout);
+          verifierContract.off("JobCompleted", completionListener);
+          console.log(`[DONE] Job #${jobId} finalized by Oracle: ${submitter}.`);
+          resolve();
+        }
+      };
+
+      verifierContract.on("JobCompleted", completionListener);
+    });
+  }
   
   // Sequential Job Queue: ensures jobs are approved and finalized one by one
   // to prevent nonce collisions and maintain deterministic benchmark results.
@@ -64,25 +86,10 @@ async function main() {
       }
 
       // --- STEP 2: WAIT FOR DON FULFILLMENT ---
-      // We use a Promise with .once() to wait for the consensus result to land on-chain.
-      console.log(`[WAIT] Awaiting OCR consensus for job #${requestId}...`);
-      await new Promise((resolve, reject) => {
-        let completionListener;
-        const timeout = setTimeout(() => {
-          verifierContract.off("JobCompleted", completionListener);
-          reject(new Error("OCR fulfillment timeout (10m)"));
-        }, 600000);
-
-        completionListener = (completedId, submitter) => {
-          if (completedId.toString() === requestId.toString()) {
-            clearTimeout(timeout);
-            verifierContract.off("JobCompleted", completionListener);
-            console.log(`[DONE] Job #${requestId} finalized by Oracle: ${submitter}.`);
-            resolve();
-          }
-        };
-
-        verifierContract.on("JobCompleted", completionListener);
+      // Fulfillment is monitored in the background so one failed AI job does not
+      // block approvals for later customer requests.
+      waitForFulfillment(requestId).catch((error) => {
+        console.error(`[ERROR] ${error.message}`);
       });
     });
   });

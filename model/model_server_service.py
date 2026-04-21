@@ -218,10 +218,11 @@ def run_full_process(job_id, prompt, filter_policy, threshold):
         print(f"[JOB {job_id}] Step 3: Reading and aggregating attribution results...")
         raw_data = np.loadtxt(output_filename)
         holder_ids, scores = process_attribution_scores(raw_data, filter_policy)
+        sorted_list = [[holder_id, str(score)] for holder_id, score in zip(holder_ids, scores)]
 
         # E. Save Result
         with jobs_lock:
-            JOBS[job_id]["result"] = {"holder_ids": holder_ids, "scores": scores}
+            JOBS[job_id]["result"] = {"sorted_list": sorted_list}
             JOBS[job_id]["status"] = "completed"
 
         print(f"[JOB {job_id}] COMPLETED SUCCESSFULLY!")

@@ -419,6 +419,7 @@ def main() -> int:
         base.derive_oracle_private_key(str(args.key_seed), idx, used_keys)
         for idx in range(args.num_oracles)
     ]
+    customer_private_key = base.derive_customer_private_key(str(args.key_seed), used_keys)
     oracle_ips = base.generate_oracle_ips(args.oracle_base_ip, args.num_oracles)
     oracle_locations = base.assign_oracle_locations(repo_root, args)
     config_digest = base.compute_config_digest(
@@ -434,7 +435,7 @@ def main() -> int:
     write_toxiproxy_files(args, repo_root, env_file_path, oracle_locations)
 
     hardhat_config_path.write_text(
-        base.render_hardhat_config(args, deployer_key, oracle_private_keys),
+        base.render_hardhat_config(args, deployer_key, oracle_private_keys, customer_private_key),
         encoding="utf-8",
     )
     deploy_script_path.write_text(

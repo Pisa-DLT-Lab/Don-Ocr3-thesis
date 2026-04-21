@@ -41,6 +41,7 @@ DEFAULT_DEPLOYER_PRIVATE_KEY = (
 )
 
 DEFAULT_BALANCE_WEI = "10000000000000000000000"  # 10000 ETH
+DEFAULT_BLOCK_GAS_LIMIT = 120_000_000
 WIPO_PROBABILITY_CSV = Path("oracle/latency/wipo_patent_region_probabilities.csv")
 AZURE_LATENCY_CSV = Path("oracle/latency/azure_region_latencies.csv")
 LATENCY_MATRIX_CONTAINER_PATH = "/usr/local/share/oracle/azure_region_latencies.csv"
@@ -186,6 +187,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_BALANCE_WEI,
         help="Wei balance assigned to the deployer and each generated oracle key.",
     )
+    parser.add_argument(
+        "--block-gas-limit",
+        type=int,
+        default=DEFAULT_BLOCK_GAS_LIMIT,
+        help="Hardhat in-memory chain block gas limit.",
+    )
     latency_group = parser.add_mutually_exclusive_group()
     latency_group.add_argument(
         "--enable-latency",
@@ -275,10 +282,10 @@ def subprocess_output_text(output: object) -> str:
     return str(output)
 
 
-def derive_oracle_private_key(key_seed: str, oracle_index: int, used: set[str]) -> str:
+def derive_private_key(label: str, key_seed: str, index: int, used: set[str]) -> str:
     counter = 0
     while True:
-        material = f"oracle-private-key|{key_seed}|{oracle_index}|{counter}".encode()
+        material = f"{label}-private-key|{key_seed}|{index}|{counter}".encode()
         digest = hashlib.sha256(material).digest()
         value = int.from_bytes(digest, byteorder="big") % (SECP256K1_ORDER - 1) + 1
         private_key = f"{value:064x}"
@@ -286,6 +293,14 @@ def derive_oracle_private_key(key_seed: str, oracle_index: int, used: set[str]) 
             used.add(private_key)
             return private_key
         counter += 1
+
+
+def derive_oracle_private_key(key_seed: str, oracle_index: int, used: set[str]) -> str:
+    return derive_private_key("oracle", key_seed, oracle_index, used)
+
+
+def derive_customer_private_key(key_seed: str, used: set[str]) -> str:
+    return derive_private_key("customer", key_seed, 0, used)
 
 
 def generate_oracle_ips(base_ip: str, count: int) -> list[str]:
@@ -765,6 +780,7 @@ def render_hardhat_config(
     args: argparse.Namespace,
     deployer_private_key: str,
     oracle_private_keys: list[str],
+    customer_private_key: str,
 ) -> str:
     account_lines = [
         "const accounts = [",
@@ -788,6 +804,19 @@ def render_hardhat_config(
             + '" },'
         )
 
+    account_lines.extend(
+        [
+            f"  // Account #{len(oracle_private_keys) + 1}: customer account used by request/benchmark scripts.",
+            (
+                '  { privateKey: "0x'
+                + customer_private_key
+                + '", balance: "'
+                + args.account_balance_wei
+                + '" },'
+            ),
+        ]
+    )
+
     account_lines.append("];")
 
     return "\n".join(
@@ -807,6 +836,7 @@ def render_hardhat_config(
             "  networks: {",
             "    hardhat: {",
             "      chainId: Number(process.env.CHAIN_ID || 31337),",
+            f"      blockGasLimit: Number(process.env.BLOCK_GAS_LIMIT || {args.block_gas_limit}),",
             "      accounts,",
             "    },",
             "    localhost: {",
@@ -1265,6 +1295,7 @@ def main() -> int:
         derive_oracle_private_key(str(args.key_seed), idx, used_keys)
         for idx in range(args.num_oracles)
     ]
+    customer_private_key = derive_customer_private_key(str(args.key_seed), used_keys)
     oracle_ips = generate_oracle_ips(args.oracle_base_ip, args.num_oracles)
     oracle_locations = assign_oracle_locations(repo_root, args)
     config_digest = compute_config_digest(
@@ -1279,7 +1310,7 @@ def main() -> int:
     deploy_script_path.parent.mkdir(parents=True, exist_ok=True)
 
     hardhat_config_path.write_text(
-        render_hardhat_config(args, deployer_key, oracle_private_keys),
+        render_hardhat_config(args, deployer_key, oracle_private_keys, customer_private_key),
         encoding="utf-8",
     )
     deploy_script_path.write_text(
