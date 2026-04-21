@@ -6,8 +6,7 @@ def load_meta(meta_path):
         meta = pickle.load(f)
     # TODO want to make this more general to arbitrary encoder/decoder schemes
     stoi, itos = meta['stoi'], meta['itos']
-    space_token = stoi.get(' ', 0)
-    encode = lambda s: [stoi.get(c, space_token) for c in s]
+    encode = lambda s: [stoi[c] for c in s]
     decode = lambda l: ''.join([itos[i] for i in l])
     return (encode, decode)
 
