@@ -8,7 +8,7 @@ The project proposes a novel decentralized application designed to address fair 
 
 * **chain**: Contains the Solidity smart contracts (`Aggregator.sol`, `OracleQueue.sol`, `OracleVerifier.sol`), Hardhat configuration, and deployment scripts.
 * **oracle**: Contains the off-chain Oracle node backend written in Go, including the custom OCR3 (Off-Chain Reporting) plugin and listener.
-* **IpfsAgent**: Scripts and configurations for handling data storage and retrieval via IPFS.
+<!--* **IpfsAgent**: Scripts and configurations for handling data storage and retrieval via IPFS.-->
 * **docker-compose.yml**: Static Docker Compose setup for the oracle network and testing environment.
 * **scripts**: Automation helpers for generating parametrized Docker Compose stacks and starting experiments.
 
@@ -68,15 +68,18 @@ To test the full system, follow this chronological sequence.
 ---
 ## Step 1: Start the Local AI Backend
 
-The oracle containers expect the attribution service to be reachable at `host.docker.internal:9090`. From the repository root:
+The oracle containers expect the Python AI module (i.e., generation + attribution service) to be reachable at `host.docker.internal:9090`. 
+
+To install the required packages for this module, run the following commands from the repository root:
 
 ```bash
 cd model
 python3 -m venv .venv
 source .venv/bin/activate
-pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm web3 Flask
+pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm Flask
 ```
 
+<!--
 The local service expects the Shakespeare checkpoint at:
 
 ```bash
@@ -89,6 +92,7 @@ If the checkpoint is stored elsewhere, create the expected directory and link it
 mkdir -p nanoGPT/out-shakespeare-char
 ln -s /absolute/path/to/ckpt.pt nanoGPT/out-shakespeare-char/ckpt.pt
 ```
+-->
 
 Then start the service:
 

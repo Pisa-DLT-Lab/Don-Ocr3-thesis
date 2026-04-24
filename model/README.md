@@ -7,19 +7,19 @@ This module implements a service that includes a generative AI model and its cor
 Install the required packages with:
 
 ```
-pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm web3 Flask
+pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm Flask
 ```
 
 ## How to run
 
 To launch the service, type:
 ```
-python3 model_service.py
+python3 model_server_service.py
 ```
 
-By default the model service will be available on port 53000.
+By default the model service will be available on port 9090.
 
 To test the model with a simple query, type:
 ```
-curl -X POST http://localhost:53000/attribute -H "Content-Type: application/json" -d '{"text": "Once upon a time there was a small dragon"}'
+curl -X POST http://localhost:9090/attribute -H "Content-Type: application/json" -d '{"text": "Once upon a time there was a small dragon"}'
 ```

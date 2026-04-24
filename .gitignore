@@ -70,10 +70,7 @@ env/
 # Directory of temp file created from model_service_v2.py
 # Avoid to push on Git .in and .out file in every test
 tmp_jobs/
-
-*.pt
 *.pth
-*.bin
 *.ckpt
 /model/checkpoints/
 
