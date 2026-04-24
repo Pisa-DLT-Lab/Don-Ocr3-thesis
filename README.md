@@ -63,7 +63,7 @@ To test the full system, follow this chronological sequence.
 
 > **Note - Digest Cache:** The first run for a new configuration computes the OCR config digest. The result is saved in `generated/config-digests.json`, so rerunning the same parameters reuses the cached digest.
 
-> **Note - Byzantine Testing:** You can test the BFT consensus by simulating malicious node behavior. In the generated Compose file, change a node's `MALICIOUS_MODE` environment variable to `"transmit_fail"`, `"timeout"`, or `"alter"`.
+> **Note - Byzantine Testing:** Malicious oracle behavior can be injected directly at generation time. By default, both `--malicious-alter-count` and `--malicious-timeout-count` are `0`, so all generated nodes are honest unless you opt in.
 
 ---
 ## Step 1: Start the Local AI Backend
@@ -116,6 +116,8 @@ Run a generated experiment by passing:
 - `NUM_ORACLES`
 - `NETWORK_SEED`
 
+The runner scripts forward extra generator flags directly to `scripts/generate_compose.py` or `scripts/generate_compose_toxiproxy.py`, so you can keep malicious-node configuration in the same command that generates and starts the stack.
+
 The generated oracle placement first selects one macro region with these probabilities:
 
 | Macro region | Patent applications | Placement probability |
@@ -139,6 +141,12 @@ Example with 7 oracles and seed `123`:
 scripts/run_generated_stack_toxiproxy.sh 7 123
 ```
 
+Example with 2 malicious `alter` nodes and 1 malicious `timeout` node:
+
+```bash
+scripts/run_generated_stack_toxiproxy.sh 7 123 --malicious-alter-count 2 --malicious-timeout-count 1
+```
+
 For 5 oracles:
 
 ```bash
@@ -153,6 +161,12 @@ Example with 7 oracles and seed `123`:
 
 ```bash
 scripts/run_generated_stack.sh 7 123
+```
+
+Example with 2 malicious `alter` nodes and 1 malicious `timeout` node:
+
+```bash
+scripts/run_generated_stack.sh 7 123 --malicious-alter-count 2 --malicious-timeout-count 1
 ```
 
 For 5 oracles:
@@ -197,6 +211,7 @@ FILTER_THRESHOLD=100
 
 - `scripts/generate_compose.py` generates a Compose stack for the requested number of oracles
 - Oracle private keys are deterministically derived from the seed
+- Malicious oracle roles are also deterministically selected from `NETWORK_SEED`; by default `--malicious-alter-count=0` and `--malicious-timeout-count=0`
 - A generated Hardhat config funds those oracle accounts
 - The OCR config digest is computed and cached
 - `generated/deployContracts.generated.js` deploys contracts using the selected digest from `CONFIG_DIGEST`
@@ -205,6 +220,15 @@ FILTER_THRESHOLD=100
 - `scripts/generate_compose.py` assigns deterministic WIPO-weighted Azure regions from `NETWORK_SEED` and `ORACLE_ID`
 - `oracle/setup_network_parametric.sh` reads those generated Azure regions and applies `tc netem` latency by default
 - Docker Compose builds and starts the chain, IPFS, bootstrap, and oracle containers
+
+You can generate malicious oracle mixes with:
+
+```bash
+--malicious-alter-count N
+--malicious-timeout-count M
+```
+
+Selected nodes receive `MALICIOUS_MODE=alter` or `MALICIOUS_MODE=timeout` in the generated Compose file. The same `NETWORK_SEED` always produces the same malicious-node assignment for a given `(NUM_ORACLES, N, M)` configuration.
 
 ### Latency data sources
 

@@ -184,6 +184,7 @@ def render_compose_toxiproxy(
     ipfs_staging = base.compose_path(compose_dir, repo_root / "IpfsAgent" / "ipfs_staging")
     toxiproxy_config_dir = base.compose_path(compose_dir, repo_root / "generated" / "toxiproxy")
     toxiproxy_ips = base.generate_oracle_ips(args.toxiproxy_base_ip, args.num_oracles)
+    malicious_oracle_modes = base.assign_malicious_oracle_modes(args)
 
     common_env = {
         "CHAIN_RPC": "${CHAIN_RPC_URL}",
@@ -206,10 +207,19 @@ def render_compose_toxiproxy(
         f"# NUM_ORACLES={args.num_oracles}",
         f"# NETWORK_SEED={args.network_seed}",
         f"# KEY_SEED={args.key_seed}",
+        f"# MALICIOUS_ALTER_COUNT={args.malicious_alter_count}",
+        f"# MALICIOUS_TIMEOUT_COUNT={args.malicious_timeout_count}",
         "# LATENCY_BACKEND=toxiproxy",
         "",
         "x-generated-oracle-keys: &generated-oracle-keys",
     ]
+    if args.malicious_count:
+        lines.extend(
+            [
+                f"# MALICIOUS_COUNT={args.malicious_count}",
+                f"# MALICIOUS_MODE={args.malicious_mode}",
+            ]
+        )
     for idx, private_key in enumerate(oracle_private_keys):
         lines.append(f"  ORACLE{idx}_PRIVATE_KEY: {base.yaml_quote(private_key)}")
 
@@ -343,6 +353,7 @@ def render_compose_toxiproxy(
                 "      <<: *oracle-common-env",
                 f"      PRIVATE_KEY: {base.yaml_quote(private_key)}",
                 f"      ORACLE_ID: {base.yaml_quote(idx)}",
+                f"      MALICIOUS_MODE: {base.yaml_quote(malicious_oracle_modes.get(idx, 'false'))}",
             ]
         )
         lines.extend(
