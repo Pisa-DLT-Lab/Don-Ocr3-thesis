@@ -164,7 +164,7 @@ async function main() {
     const seqNr = 1; // example sequence number
     const jobId = 0; // example job ID
     const vector = new Array(REPORT_SIZE).fill(0); vector[0] = 1;// example result vector
-    const reportData = ethers.solidityPacked(["uint256", "int128[]"], [jobId, vector]);
+    const reportData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256", "int128[]"], [jobId, vector]);
     const hash = ethers.solidityPackedKeccak256(["bytes32", "uint64", "bytes"], [CONFIG_DIGEST, seqNr, reportData]);
     let rs = [];
     let ss = [];
@@ -176,8 +176,8 @@ async function main() {
         rs.push(ethers.zeroPadValue(sig.r, 32));
         ss.push(ethers.zeroPadValue(sig.s, 32));
         vs.push(sig.v);
-            //const recovered = ethers.recoverAddress(hash, {r: sig.r, s: sig.s, v: sig.v});
-            //console.log(sig.v, signers[i].address, recovered);
+        //const recovered = ethers.recoverAddress(hash, {r: sig.r, s: sig.s, v: sig.v});
+        //console.log(sig.v, signers[i].address, recovered);
     }
     const rawVs = packBytesToBytes32(vs);
     const transmitTx = await contractAsSigner.transmit(CONFIG_DIGEST, seqNr, reportData, rs, ss, rawVs);
