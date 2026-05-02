@@ -12,23 +12,25 @@ This codebase was developed by the following contributors:
 - **Calogero Turco**, University of Pisa, Italy
 - **Matteo Loporchio**, University of Pisa, Italy
 
-## Project Structure
+## Project structure
+
+The project is organized into the following main directories:
 
 * **chain**: Contains the Solidity smart contracts, Hardhat configuration, and deployment scripts.
 * **model**: Contains the Python code for the AI model and the corresponding attribution method.
 * **oracle**: Contains the off-chain oracle node backend written in Go, including the custom OCR3 (Off-Chain Reporting v3) plugin and listener.
 * **scripts**: Automation helpers for generating parametrized Docker Compose stacks and starting experiments.
 
-## Tech Stack
+## Tech stack
+
+The project utilizes a variety of technologies across different components:
 
 * **Blockchain/Smart Contracts:** Solidity, Hardhat, Ethers.js
 * **Oracle Infrastructure:** Chainlink DON, Go (Golang), Docker
 * **Decentralized Storage:** IPFS (kubo)
 * **AI Model & Attribution:** Python, PyTorch, dattri
 
----
-
-## Prerequisites
+## Installation and setup
 
 To run this project locally, ensure you have the following installed on your machine:
 
@@ -38,16 +40,14 @@ To run this project locally, ensure you have the following installed on your mac
 * **Docker** and **Docker Compose** (v29.2.0 and Docker Compose version v5.0.2)
 * **Python** (for the AI backend service)
 
----
-
-## Installation & Setup
+Follow these steps to set up the project locally:
 
 1. **Clone the repository**
 ```bash
     git clone https://github.com/FedeTome0/Don-Ocr3-thesis.git
     cd Don-Ocr3-thesis
 ```
-2. **Install Smart Contract dependencies (Hardhat)**
+2. **Install smart contract dependencies (Hardhat)**
 ```bash
     cd chain
     npm install
@@ -60,34 +60,23 @@ To run this project locally, ensure you have the following installed on your mac
     source .venv/bin/activate
     pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm Flask
 ```
----
 
-## How to Run the Project locally 
-
-Thanks to the Docker orchestration, booting the entire ecosystem is highly automated.
-The recommended path is the generated stack script, which creates a parametrized Compose file for a selected number of oracles and network seed.
-
-The generated setup will:
-
-- Start the Hardhat local node
-- Wait for it to be ready
-- Fund the seed-derived oracle accounts plus one extra customer account in Hardhat
-- Deploy the smart contracts with the matching OCR config digest
-- Boot the off-chain oracle nodes
-- Apply deterministic simulated latency among oracle containers by default
+## How to run
 
 To test the full system, follow this chronological sequence.
 
+<!--
 > **Note - Generated Files:** The automation writes `docker-compose.generated.yml`, `generated/hardhat.config.generated.js`, `generated/deployContracts.generated.js`, and `generated/config-digests.json`. These are derived artifacts for a specific experiment configuration.
 
 > **Note - Digest Cache:** The first run for a new configuration computes the OCR config digest. The result is saved in `generated/config-digests.json`, so rerunning the same parameters reuses the cached digest.
 
 > **Note - Byzantine Testing:** Malicious oracle behavior can be injected directly at generation time. By default, both `--malicious-alter-count` and `--malicious-timeout-count` are `0`, so all generated nodes are honest unless you opt in.
 
----
-## Step 1: Start the Local AI Backend
+-->
 
-The oracle containers expect the Python AI module (i.e., generation + attribution service) to be reachable at `host.docker.internal:9090`. 
+### Step 1: Start the AI module
+
+Before starting the oracle containers, ensure the Python AI module (i.e., the generation and attribution service) is running and accessible at `host.docker.internal:9090`.
 
 To start the service:
 
@@ -99,41 +88,47 @@ python3 model_server_service.py
 
 By default, `model_server_service.py` listens on `0.0.0.0:9090`, which is the address expected by the oracle containers through `host.docker.internal:9090`.
 
-<!-->
-You can override the host or port if needed:
+### Step 2: Boot the core infrastructure
+
+Thanks to the Docker orchestration, booting the entire ecosystem is highly automated. 
+
+In particular, the **generated stack script** creates a parametrized compose file for a selected number of oracles and network seed.
+
+The generated setup will:
+
+- Start the Hardhat local node.
+- Wait for it to be ready.
+- Fund the seed-derived oracle accounts plus one extra customer account in Hardhat.
+- Deploy the smart contracts with the matching OCR config digest.
+- Boot the off-chain oracle nodes.
+- Apply deterministic simulated latency among oracle containers by default.
+
+To run the script, open a new terminal in the root directory of the project. Note that, if no `.env` file exists, the runner creates it from `.env.example`. Then execute:
 
 ```bash
-MODEL_SERVER_HOST=0.0.0.0 MODEL_SERVER_PORT=9090 python3 model_server_service.py
+scripts/run_generated_stack_toxiproxy.sh <NUMBER_OF_ORACLES> <NETWORK_SEED> [--malicious-alter-count N] [--malicious-timeout-count M] [--disable-latency]
 ```
--->
 
----
+The script requires the following mandatory parameters:
 
-## Step 2: Boot the Core Infrastructure
+- `NUMBER_OF_ORACLES`: The number of oracle nodes to generate in the stack (e.g., `7`).
+- `NETWORK_SEED`: A seed for deterministic generation of oracle keys, latency, and malicious node selection (e.g., `123`).
 
-Open a new terminal in the root directory of the project. If `.env` does not exist, the runner creates it from `.env.example`.
+The script also accepts optional flags for malicious node configuration and latency control:
 
-Run a generated experiment by passing:
+- `--malicious-alter-count N`: Number of oracles to assign the "alter" malicious behavior (default: `0`). These nodes will alter their response to the Aggregator, simulating data tampering or misreporting.
 
-- `NUM_ORACLES`
-- `NETWORK_SEED`
+- `--malicious-timeout-count M`: Number of oracles to assign the "timeout" malicious behavior (default: `0`). These nodes will exhibit timeout behavior, simulating unresponsiveness or denial of service.
 
-The runner scripts forward extra generator flags directly to `scripts/generate_compose.py` or `scripts/generate_compose_toxiproxy.py`, so you can keep malicious-node configuration in the same command that generates and starts the stack.
+You can combine both flags to create mixed malicious node configurations. For example, `--malicious-alter-count 2 --malicious-timeout-count 1` will assign 2 oracles to alter and 1 oracle to timeout behavior. 
 
-The generated oracle placement first selects one macro region with these probabilities:
+Finally, simulated network latency is enabled by default. The optional `--disable-latency` flag allows you to disable the latency among oracle nodes while keeping the generated configuration and Compose stack intact. This can be useful for testing scenarios where latency is not a factor or when you want to isolate other variables in the system.
 
-| Macro region | Patent applications | Placement probability |
-| --- | ---: | ---: |
-| Africa | 19,100 | 0.5127516779% |
-| Asia | 2,612,500 | 70.1342281879% |
-| Europe | 362,700 | 9.7369127517% |
-| LAC | 55,600 | 1.4926174497% |
-| Northern America | 638,600 | 17.1436241611% |
-| Oceania | 36,500 | 0.9798657718% |
+This script uses the Toxiproxy framework (https://github.com/shopify/toxiproxy) to simulate latency. Note that Toxiproxy-based latency is used by default, which is compatible with all Docker hosts. If you are running on a Linux host with `tc netem` support, you can use the `scripts/run_generated_stack.sh` script instead to apply latency directly at the kernel level (do note that this tool supports network configuration with at most 15 oracles).
 
-Within the selected macro region, the generator distributes probability evenly across eligible Azure subgroups, then evenly across eligible Azure regions in each subgroup.
 
-### Option A: Toxiproxy latency
+<!--
+#### Option A: Toxiproxy latency
 
 Use this option on WSL or any Docker host where Linux `tc netem` qdisc support is unavailable.
 
@@ -155,7 +150,7 @@ For 5 oracles:
 scripts/run_generated_stack_toxiproxy.sh 5 42
 ```
 
-### Option B: Kernel `tc netem` latency
+#### Option B: Kernel `tc netem` latency
 
 Use this option on Linux hosts with `sch_prio`, `sch_netem`, and `cls_u32` support.
 
@@ -183,6 +178,8 @@ Simulated network latency is enabled by default. To disable it while keeping gen
 scripts/run_generated_stack.sh 7 123 --disable-latency
 ```
 
+#### Note on OCR config digest computation
+
 If the first OCR digest computation is slow, pre-pull the main images:
 
 ```bash
@@ -209,7 +206,7 @@ FILTER_THRESHOLD=100
 
 `FILTER_POLICY` accepts `TOP_HOLDERS` or `TOP_VALUES`. If it is not set, deployment defaults to `TOP_HOLDERS`.
 
-### What happens under the hood
+#### What happens under the hood
 
 - `scripts/generate_compose.py` generates a Compose stack for the requested number of oracles
 - Oracle private keys are deterministically derived from the seed
@@ -232,7 +229,7 @@ You can generate malicious oracle mixes with:
 
 Selected nodes receive `MALICIOUS_MODE=alter` or `MALICIOUS_MODE=timeout` in the generated Compose file. The same `NETWORK_SEED` always produces the same malicious-node assignment for a given `(NUM_ORACLES, N, M)` configuration.
 
-### Latency data sources
+#### Latency data sources
 
 In the absence of precise data about where oracle services are geographically deployed, we use regional patent application counts as a proxy for regional technological activity and derive placement probabilities from the latest available WIPO data.
 
@@ -240,7 +237,9 @@ In the absence of precise data about where oracle services are geographically de
 - `oracle/latency/azure_region_latencies.csv` stores the Azure inter-region latency matrix used for toxiproxi and `tc netem` latency assignment. Source: https://learn.microsoft.com/en-us/azure/networking/azure-network-latency?tabs=Americas%2CWestUS
 - Generated oracle locations are deterministic from `NETWORK_SEED` and `ORACLE_ID`.
 
-Wait until you see the message:
+-->
+
+**Important**: Once you have launched the script, wait until you see the message:
 
 ```
 --- CHAIN READY ---
@@ -248,16 +247,12 @@ Wait until you see the message:
 
 in the Docker logs before proceeding.
 
-## Step 3: Simulate the Workflow
 
-Now you simulate the two actors of the system:
+### Step 3: Simulate the Workflow
 
-- Model Creator
-- Customer
+Once the Docker infrastructure is up and running, you can simulate the main workflow of the system, which involves interactions between the **model creator** and the **customer** through the deployed smart contracts and oracle network.
 
----
-
-### 1. Start the Model Creator Listener
+#### 1. Start the Model Creator Listener
 
 Open a new terminal (1):
 
@@ -266,11 +261,9 @@ cd chain
 npx hardhat run scripts/modelCreatorApprove.js --network localhost
 ```
 
-This script simulates the model creator listening for Aggregator request events. Wait for it to be deployed and then start listening to the events.
+This script simulates the model creator listening for ```Aggregator``` request events. Wait for it to be deployed and then start listening to the events.
 
----
-
-### 2. Trigger the Customer Request
+#### 2. Trigger the Customer Request
 
 Open another terminal (2):
 
@@ -302,13 +295,12 @@ The customer scripts use signer `NUM_ORACLES + 1`, after account `0` for the mod
 You can monitor everything in the main Docker terminal.
 To check the current result through the Aggregator facade, use `verify.js` to inspect the first ten numbers of the vector.
 
----
 
-## How to Stop the Environment
+## How to stop the environment
 
-To stop execution:
+To stop the execution of containers, press `CTRL+C` in the Docker terminal.
 
-Press `CTRL+C` in the Docker terminal.
+<!--
 
 To rebuild the containers:
 
@@ -326,3 +318,5 @@ To reset everything (deleting docker's data)
 ```bash
 docker system prune -a -f
 ```
+
+-->
