@@ -1,0 +1,3 @@
+# docs
+
+This folder contains documentation files for the project.

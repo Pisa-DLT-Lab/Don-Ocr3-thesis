@@ -1,8 +1,14 @@
 # A decentralized framework for automated and trustworthy royalty computation for AI model training data contributors
 
-This repository contains the implementation of a framework for computing and distributing royalties to the original owners of the data used to train Large Language Models (LLMs). 
+This repository contains the implementation of a framework for remunerating training data contributors for generative AI models.  
 
-The system leverages the Ethereum blockchain and is built on top of a Decentralized Oracle Network (DON) using Chainlink's Off-Chain Reporting (OCR) protocol.
+The framework leverages blockchain technology, specifically the Ethereum blockchain, and a Decentralized Oracle Network (DON) using Chainlink's Off-Chain Reporting (OCR) protocol.
+
+The contribution of each data provider to a given model output is quantified based on the influence scores returned by Training Data Attribution (TDA) methods. The remuneration is then automatically distributed according to customizable logic implemented through smart contracts.
+
+## Architecture
+
+You can find a detailed description of the architecture of the system in the [architecture documentation](./docs/Architecture.md).
 
 ## Contributors
 
@@ -17,6 +23,7 @@ This codebase was developed by the following contributors:
 The project is organized into the following main directories:
 
 * **chain**: Contains the Solidity smart contracts, Hardhat configuration, and deployment scripts.
+* **docs**: Contains additional documentation files for the project.
 * **model**: Contains the Python code for the AI model and the corresponding attribution method.
 * **oracle**: Contains the off-chain oracle node backend written in Go, including the custom OCR3 (Off-Chain Reporting v3) plugin and listener.
 * **scripts**: Automation helpers for generating parametrized Docker Compose stacks and starting experiments.
@@ -126,119 +133,6 @@ Finally, simulated network latency is enabled by default. The optional `--disabl
 
 This script uses the Toxiproxy framework (https://github.com/shopify/toxiproxy) to simulate latency. Note that Toxiproxy-based latency is used by default, which is compatible with all Docker hosts. If you are running on a Linux host with `tc netem` support, you can use the `scripts/run_generated_stack.sh` script instead to apply latency directly at the kernel level (do note that this tool supports network configuration with at most 15 oracles).
 
-
-<!--
-#### Option A: Toxiproxy latency
-
-Use this option on WSL or any Docker host where Linux `tc netem` qdisc support is unavailable.
-
-Example with 7 oracles and seed `123`:
-
-```bash
-scripts/run_generated_stack_toxiproxy.sh 7 123
-```
-
-Example with 2 malicious `alter` nodes and 1 malicious `timeout` node:
-
-```bash
-scripts/run_generated_stack_toxiproxy.sh 7 123 --malicious-alter-count 2 --malicious-timeout-count 1
-```
-
-For 5 oracles:
-
-```bash
-scripts/run_generated_stack_toxiproxy.sh 5 42
-```
-
-#### Option B: Kernel `tc netem` latency
-
-Use this option on Linux hosts with `sch_prio`, `sch_netem`, and `cls_u32` support.
-
-Example with 7 oracles and seed `123`:
-
-```bash
-scripts/run_generated_stack.sh 7 123
-```
-
-Example with 2 malicious `alter` nodes and 1 malicious `timeout` node:
-
-```bash
-scripts/run_generated_stack.sh 7 123 --malicious-alter-count 2 --malicious-timeout-count 1
-```
-
-For 5 oracles:
-
-```bash
-scripts/run_generated_stack.sh 5 42
-```
-
-Simulated network latency is enabled by default. To disable it while keeping generated keys and Compose:
-
-```bash
-scripts/run_generated_stack.sh 7 123 --disable-latency
-```
-
-#### Note on OCR config digest computation
-
-If the first OCR digest computation is slow, pre-pull the main images:
-
-```bash
-docker pull golang:1.24-alpine
-docker pull ghcr.io/shopify/toxiproxy:2.12.0
-docker pull curlimages/curl:8.10.1
-docker pull node:18-alpine
-docker pull alpine:latest
-docker pull ipfs/kubo:latest
-```
-
-If digest computation still needs more time:
-
-```bash
-scripts/run_generated_stack.sh 7 123 --digest-timeout-seconds 3600
-```
-
-The on-chain Aggregator filter policy is configured from `.env` during deployment:
-
-```bash
-FILTER_POLICY=TOP_HOLDERS
-FILTER_THRESHOLD=100
-```
-
-`FILTER_POLICY` accepts `TOP_HOLDERS` or `TOP_VALUES`. If it is not set, deployment defaults to `TOP_HOLDERS`.
-
-#### What happens under the hood
-
-- `scripts/generate_compose.py` generates a Compose stack for the requested number of oracles
-- Oracle private keys are deterministically derived from the seed
-- Malicious oracle roles are also deterministically selected from `NETWORK_SEED`; by default `--malicious-alter-count=0` and `--malicious-timeout-count=0`
-- A generated Hardhat config funds those oracle accounts
-- The OCR config digest is computed and cached
-- `generated/deployContracts.generated.js` deploys contracts using the selected digest from `CONFIG_DIGEST`
-- `generated/deployContracts.generated.js` sets the Aggregator filter policy from `.env`
-- The oracle containers read `AGGREGATOR_ADDRESS` from `.env`; Queue, Verifier, and filter policy are discovered from Aggregator on-chain
-- `scripts/generate_compose.py` assigns deterministic WIPO-weighted Azure regions from `NETWORK_SEED` and `ORACLE_ID`
-- `oracle/setup_network_parametric.sh` reads those generated Azure regions and applies `tc netem` latency by default
-- Docker Compose builds and starts the chain, IPFS, bootstrap, and oracle containers
-
-You can generate malicious oracle mixes with:
-
-```bash
---malicious-alter-count N
---malicious-timeout-count M
-```
-
-Selected nodes receive `MALICIOUS_MODE=alter` or `MALICIOUS_MODE=timeout` in the generated Compose file. The same `NETWORK_SEED` always produces the same malicious-node assignment for a given `(NUM_ORACLES, N, M)` configuration.
-
-#### Latency data sources
-
-In the absence of precise data about where oracle services are geographically deployed, we use regional patent application counts as a proxy for regional technological activity and derive placement probabilities from the latest available WIPO data.
-
-- `oracle/latency/wipo_patent_region_probabilities.csv` stores the WIPO-derived region placement probabilities. Source: WIPO IP Statistics Data Center: https://www3.wipo.int/ipstats/key-search/search-result?type=KEY&key=203
-- `oracle/latency/azure_region_latencies.csv` stores the Azure inter-region latency matrix used for toxiproxi and `tc netem` latency assignment. Source: https://learn.microsoft.com/en-us/azure/networking/azure-network-latency?tabs=Americas%2CWestUS
-- Generated oracle locations are deterministic from `NETWORK_SEED` and `ORACLE_ID`.
-
--->
-
 **Important**: Once you have launched the script, wait until you see the message:
 
 ```
@@ -252,36 +146,42 @@ in the Docker logs before proceeding.
 
 Once the Docker infrastructure is up and running, you can simulate the main workflow of the system, which involves interactions between the **model creator** and the **customer** through the deployed smart contracts and oracle network.
 
-#### 1. Start the Model Creator Listener
+#### 1. Start the model creator listener
 
-Open a new terminal (1):
+This script simulates the model creator listening for new requests by the customer. Wait for it to be deployed and then start listening to the events.
+
+To launch the listener, open a new terminal (1) and type:
 
 ```bash
 cd chain
 npx hardhat run scripts/modelCreatorApprove.js --network localhost
 ```
 
-This script simulates the model creator listening for ```Aggregator``` request events. Wait for it to be deployed and then start listening to the events.
+#### 2a. Trigger the Customer Request
 
-#### 2. Trigger the Customer Request
+This script simulates the customer sending a request to the system, which will trigger the computation and royalty distribution process. 
 
-Open another terminal (2):
+To trigger the request, open another terminal (2) and type:
 
 ```bash
 cd chain
 npx hardhat run scripts/customerRequest.js --network localhost
 ```
-Check for latest result in terminal (2):
+To check for latest result in terminal (2):
 
 ```bash
 cd chain
 npx hardhat run scripts/verify.js --network localhost
 ```
 
-Instead, for testing:
+#### 2b. Benchmarking
+
+Alternatively, instead of simulating a single request, you can directly run the benchmark script, which simulates multiple customer requests and measures the performance of the system under load. 
+
+To launch the testing script, open a terminal and type:
 ```bash
 cd chain
-npx hardhat run scripts/benchmark.js --network localhost
+npx hardhat run scripts/custom_benchmark.js --network localhost
 ```
 
 At this point:
@@ -294,7 +194,6 @@ The customer scripts use signer `NUM_ORACLES + 1`, after account `0` for the mod
 
 You can monitor everything in the main Docker terminal.
 To check the current result through the Aggregator facade, use `verify.js` to inspect the first ten numbers of the vector.
-
 
 ## How to stop the environment
 
