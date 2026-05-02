@@ -1,31 +1,42 @@
-# Decentralized Oracle Network (DON) for LLM Royalties
+# A decentralized framework for automated and trustworthy royalty computation for AI model training data contributors
 
-This repository contains my Bachelor's thesis project, focused on the development of a Decentralized Oracle Network (DON) utilizing Chainlink's architecture and libraries.
+This repository contains the implementation of a framework for computing and distributing royalties to the original owners of the data used to train Large Language Models (LLMs). 
 
-The project proposes a novel decentralized application designed to address fair compensation in the AI industry. Specifically, it attributes and distributes royalties to the original owners of the data used to train Large Language Models (LLMs). By leveraging the off-chain computation capabilities of the DON, custom oracles securely execute an attribution algorithm to calculate the correct royalty distribution, ensuring a transparent, trustless, and decentralized reward system.
+The system leverages the Ethereum blockchain and is built on top of a Decentralized Oracle Network (DON) using Chainlink's Off-Chain Reporting (OCR) protocol.
+
+## Contributors
+
+This codebase was developed by the following contributors:
+
+- **Federico Tomellini**, University of Pisa, Italy
+- **Calogero Turco**, University of Pisa, Italy
+- **Matteo Loporchio**, University of Pisa, Italy
 
 ## Project Structure
 
-* **chain**: Contains the Solidity smart contracts (`Aggregator.sol`, `OracleQueue.sol`, `OracleVerifier.sol`), Hardhat configuration, and deployment scripts.
-* **oracle**: Contains the off-chain Oracle node backend written in Go, including the custom OCR3 (Off-Chain Reporting) plugin and listener.
-<!--* **IpfsAgent**: Scripts and configurations for handling data storage and retrieval via IPFS.-->
-* **docker-compose.yml**: Static Docker Compose setup for the oracle network and testing environment.
+* **chain**: Contains the Solidity smart contracts, Hardhat configuration, and deployment scripts.
+* **model**: Contains the Python code for the AI model and the corresponding attribution method.
+* **oracle**: Contains the off-chain oracle node backend written in Go, including the custom OCR3 (Off-Chain Reporting v3) plugin and listener.
 * **scripts**: Automation helpers for generating parametrized Docker Compose stacks and starting experiments.
 
 ## Tech Stack
+
 * **Blockchain/Smart Contracts:** Solidity, Hardhat, Ethers.js
 * **Oracle Infrastructure:** Chainlink DON, Go (Golang), Docker
 * **Decentralized Storage:** IPFS (kubo)
+* **AI Model & Attribution:** Python, PyTorch, dattri
 
 ---
 
 ## Prerequisites
 
 To run this project locally, ensure you have the following installed on your machine:
+
+* **Git**
 * **Node.js** (v24.13.0 or higher)
 * **Go** (v1.23.4 linux/amd64 or higher)
 * **Docker** and **Docker Compose** (v29.2.0 and Docker Compose version v5.0.2)
-* **Git**
+* **Python** (for the AI backend service)
 
 ---
 
@@ -42,9 +53,17 @@ To run this project locally, ensure you have the following installed on your mac
     npm install
     cd ..
 ```
+3. **Install Python dependencies for the AI backend**
+```bash
+    cd model
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm Flask
+```
 ---
 
 ## How to Run the Project locally 
+
 Thanks to the Docker orchestration, booting the entire ecosystem is highly automated.
 The recommended path is the generated stack script, which creates a parametrized Compose file for a selected number of oracles and network seed.
 
@@ -70,44 +89,23 @@ To test the full system, follow this chronological sequence.
 
 The oracle containers expect the Python AI module (i.e., generation + attribution service) to be reachable at `host.docker.internal:9090`. 
 
-To install the required packages for this module, run the following commands from the repository root:
+To start the service:
 
 ```bash
 cd model
-python3 -m venv .venv
 source .venv/bin/activate
-pip3 install dattri torch numpy transformers datasets tiktoken wandb tqdm Flask
-```
-
-<!--
-The local service expects the Shakespeare checkpoint at:
-
-```bash
-model/nanoGPT/out-shakespeare-char/ckpt.pt
-```
-
-If the checkpoint is stored elsewhere, create the expected directory and link it:
-
-```bash
-mkdir -p nanoGPT/out-shakespeare-char
-ln -s /absolute/path/to/ckpt.pt nanoGPT/out-shakespeare-char/ckpt.pt
-```
--->
-
-Then start the service:
-
-```bash
 python3 model_server_service.py
 ```
 
 By default, `model_server_service.py` listens on `0.0.0.0:9090`, which is the address expected by the oracle containers through `host.docker.internal:9090`.
 
+<!-->
 You can override the host or port if needed:
 
 ```bash
 MODEL_SERVER_HOST=0.0.0.0 MODEL_SERVER_PORT=9090 python3 model_server_service.py
 ```
-
+-->
 
 ---
 

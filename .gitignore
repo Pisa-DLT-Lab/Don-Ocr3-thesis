@@ -5,6 +5,8 @@
 .idea/
 .vscode/
 *.log
+generated/
+unused/
 
 # ========================
 # SECRETS & CONFIGS
